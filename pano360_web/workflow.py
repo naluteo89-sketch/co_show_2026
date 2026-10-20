@@ -10,6 +10,11 @@ UI_ONLY = {"MarkdownNote", "Note", "PreviewImage"}
 SKIP_WIDGETS = {"upload", "control_after_generate"}
 
 
+def node(class_type, inputs, title):
+    """ComfyUI API 노드의 공통 형식."""
+    return {"class_type": class_type, "inputs": inputs, "_meta": {"title": title}}
+
+
 def ui_to_api(ui: dict) -> dict:
     nodes = {n["id"]: n for n in ui["nodes"]}
     links = {l[0]: l for l in ui["links"]}
@@ -37,7 +42,8 @@ def ui_to_api(ui: dict) -> dict:
 
 
 def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
-          seed1=None, seed2=None, prefix="VR360/studio", settings: dict | None = None) -> tuple[dict, dict]:
+          seed1=None, seed2=None, prefix="VR360/studio", settings: dict | None = None,
+          keep_mask: str | None = None) -> tuple[dict, dict]:
     api = ui_to_api(copy.deepcopy(template_ui))
 
     def set_(key, field, value):
@@ -72,6 +78,10 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
         del api[str(ids["save_2k"])]
     set_("save_final", "filename_prefix", prefix + "_360")
 
+    # 원본 사진 보존: 1차 생성에서 사진 영역은 다시 그리지 않음 (초록 부분만 생성)
+    if keep_mask:
+        lock_photo_region(api, ids, keep_mask)
+
     # 이음새 복원: 띠를 초록(#00ff00)으로 칠해 아웃페인트 LoRA 방식으로 '채우기'
     # (기존: 이음새가 그대로 있는 그림을 참조로 줘서, 편집 모델이 이음새까지 그대로 다시 그림)
     green_seam_band(api, ids, st)
@@ -104,31 +114,30 @@ def build_enhance(image: str, W: int, H: int, *, final_w=8192, upscale_model="4x
     FW, FH = final_w, final_w // 2
     r = FW / W
     pad_out = round(pad * r)
-    n = lambda c, i, t: {"class_type": c, "inputs": i, "_meta": {"title": t}}
-    wf = {"1": n("LoadImage", {"image": image}, "360 원본")}
+    wf = {"1": node("LoadImage", {"image": image}, "360 원본")}
     if W >= FW:                                   # 이미 충분히 큼 → 8K 로 맞추기만
-        wf["12"] = n("ImageScale", {"image": ["1", 0], "upscale_method": "lanczos", "width": FW, "height": FH,
+        wf["12"] = node("ImageScale", {"image": ["1", 0], "upscale_method": "lanczos", "width": FW, "height": FH,
                                     "crop": "disabled"}, "8K 로 맞춤")
         last = ["12", 0]
     else:
         wf.update({
-            "2": n("EmptyImage", {"width": W + 2 * pad, "height": H, "batch_size": 1, "color": 0}, "패딩 캔버스"),
-            "3": n("ImageCrop", {"image": ["1", 0], "width": pad, "height": H, "x": W - pad, "y": 0}, "오른쪽 끝"),
-            "4": n("ImageCrop", {"image": ["1", 0], "width": pad, "height": H, "x": 0, "y": 0}, "왼쪽 끝"),
-            "5": n("ImageCompositeMasked", {"destination": ["2", 0], "source": ["1", 0], "x": pad, "y": 0,
+            "2": node("EmptyImage", {"width": W + 2 * pad, "height": H, "batch_size": 1, "color": 0}, "패딩 캔버스"),
+            "3": node("ImageCrop", {"image": ["1", 0], "width": pad, "height": H, "x": W - pad, "y": 0}, "오른쪽 끝"),
+            "4": node("ImageCrop", {"image": ["1", 0], "width": pad, "height": H, "x": 0, "y": 0}, "왼쪽 끝"),
+            "5": node("ImageCompositeMasked", {"destination": ["2", 0], "source": ["1", 0], "x": pad, "y": 0,
                                             "resize_source": False}, "가운데 원본"),
-            "6": n("ImageCompositeMasked", {"destination": ["5", 0], "source": ["3", 0], "x": 0, "y": 0,
+            "6": node("ImageCompositeMasked", {"destination": ["5", 0], "source": ["3", 0], "x": 0, "y": 0,
                                             "resize_source": False}, "왼쪽 패딩"),
-            "7": n("ImageCompositeMasked", {"destination": ["6", 0], "source": ["4", 0], "x": W + pad, "y": 0,
+            "7": node("ImageCompositeMasked", {"destination": ["6", 0], "source": ["4", 0], "x": W + pad, "y": 0,
                                             "resize_source": False}, "오른쪽 패딩"),
-            "8": n("UpscaleModelLoader", {"model_name": upscale_model}, "업스케일 모델"),
-            "9": n("ImageUpscaleWithModel", {"upscale_model": ["8", 0], "image": ["7", 0]}, "AI 업스케일"),
-            "10": n("ImageScale", {"image": ["9", 0], "upscale_method": "lanczos", "width": FW + 2 * pad_out,
+            "8": node("UpscaleModelLoader", {"model_name": upscale_model}, "업스케일 모델"),
+            "9": node("ImageUpscaleWithModel", {"upscale_model": ["8", 0], "image": ["7", 0]}, "AI 업스케일"),
+            "10": node("ImageScale", {"image": ["9", 0], "upscale_method": "lanczos", "width": FW + 2 * pad_out,
                                    "height": FH, "crop": "disabled"}, "배율 보정"),
-            "11": n("ImageCrop", {"image": ["10", 0], "width": FW, "height": FH, "x": pad_out, "y": 0}, "패딩 제거"),
-            "12": n("ImageScale", {"image": ["1", 0], "upscale_method": "lanczos", "width": FW, "height": FH,
+            "11": node("ImageCrop", {"image": ["10", 0], "width": FW, "height": FH, "x": pad_out, "y": 0}, "패딩 제거"),
+            "12": node("ImageScale", {"image": ["1", 0], "upscale_method": "lanczos", "width": FW, "height": FH,
                                    "crop": "disabled"}, "Lanczos 기준본"),
-            "13": n("ImageBlend", {"image1": ["11", 0], "image2": ["12", 0], "blend_factor": float(blend),
+            "13": node("ImageBlend", {"image1": ["11", 0], "image2": ["12", 0], "blend_factor": float(blend),
                                    "blend_mode": "normal"}, "AI/Lanczos 블렌드"),
         })
         last = ["13", 0]
@@ -144,9 +153,9 @@ def build_enhance(image: str, W: int, H: int, *, final_w=8192, upscale_model="4x
                           denoise=refine.get("denoise", 0.3), tile=refine.get("tile", 1536),
                           overlap=refine.get("overlap", 192))
     if noise:
-        wf["14"] = n("ImageAddNoise", {"image": last, "seed": 0, "strength": float(noise)}, "디더")
+        wf["14"] = node("ImageAddNoise", {"image": last, "seed": 0, "strength": float(noise)}, "디더")
         last = ["14", 0]
-    wf["15"] = n("SaveImage", {"images": last, "filename_prefix": prefix + "_360"}, "8K 저장")
+    wf["15"] = node("SaveImage", {"images": last, "filename_prefix": prefix + "_360"}, "8K 저장")
     return wf
 
 
@@ -160,20 +169,19 @@ def build_pole(template_ui: dict, *, image: str, mask: str, positive: str, negat
     wf = {k: base[k] for k in loader_ids}
     wf[lora]["inputs"]["strength_model"] = float(lora_strength)
     s = seed if seed is not None else random.randint(0, 2**31 - 1)
-    n = lambda c, i, t: {"class_type": c, "inputs": i, "_meta": {"title": t}}
     wf.update({
-        "201": n("LoadImage", {"image": image}, "돌린 ERP"),
-        "202": n("LoadImageMask", {"image": mask, "channel": "red"}, "극점 마스크"),
-        "203": n("CLIPTextEncode", {"clip": [clip, 0], "text": positive}, "극점 Positive"),
-        "204": n("CLIPTextEncode", {"clip": [clip, 0], "text": negative}, "극점 Negative"),
-        "205": n("VAEEncode", {"pixels": ["201", 0], "vae": [vae, 0]}, "인코드"),
-        "206": n("ReferenceLatent", {"conditioning": ["203", 0], "latent": ["205", 0]}, "주변 참조"),
-        "207": n("SetLatentNoiseMask", {"samples": ["205", 0], "mask": ["202", 0]}, "극점만 다시"),
-        "208": n("KSampler", {"model": [lora, 0], "positive": ["206", 0], "negative": ["204", 0],
+        "201": node("LoadImage", {"image": image}, "돌린 ERP"),
+        "202": node("LoadImageMask", {"image": mask, "channel": "red"}, "극점 마스크"),
+        "203": node("CLIPTextEncode", {"clip": [clip, 0], "text": positive}, "극점 Positive"),
+        "204": node("CLIPTextEncode", {"clip": [clip, 0], "text": negative}, "극점 Negative"),
+        "205": node("VAEEncode", {"pixels": ["201", 0], "vae": [vae, 0]}, "인코드"),
+        "206": node("ReferenceLatent", {"conditioning": ["203", 0], "latent": ["205", 0]}, "주변 참조"),
+        "207": node("SetLatentNoiseMask", {"samples": ["205", 0], "mask": ["202", 0]}, "극점만 다시"),
+        "208": node("KSampler", {"model": [lora, 0], "positive": ["206", 0], "negative": ["204", 0],
                               "latent_image": ["207", 0], "seed": int(s), "steps": int(steps), "cfg": float(cfg),
                               "sampler_name": "euler", "scheduler": "simple", "denoise": float(denoise)}, "극점 인페인트"),
-        "209": n("VAEDecode", {"samples": ["208", 0], "vae": [vae, 0]}, "디코드"),
-        "210": n("PreviewImage", {"images": ["209", 0]}, "중간 결과(임시, output 폴더에 저장 안 함)"),
+        "209": node("VAEDecode", {"samples": ["208", 0], "vae": [vae, 0]}, "디코드"),
+        "210": node("PreviewImage", {"images": ["209", 0]}, "중간 결과(임시, output 폴더에 저장 안 함)"),
     })
     return wf, s
 
@@ -196,25 +204,24 @@ def add_refine(wf: dict, src: list, W: int, H: int, *, unet: str, clip: str, vae
                negative: str, seed=0, steps=20, cfg=4.0, denoise=0.3, tile=1536, overlap=192,
                id_base=400, wrap=True) -> list:
     """wf 에 타일 리파인 노드를 추가하고 최종 이미지 참조를 반환. unet/clip/vae 는 기존 로더 노드 id."""
-    n = lambda c, i, t: {"class_type": c, "inputs": i, "_meta": {"title": t}}
     k = id_base
     def nid():
         nonlocal k
         k += 1
         return str(k)
     pos, neg = nid(), nid()
-    wf[pos] = n("CLIPTextEncode", {"clip": [clip, 0], "text": positive}, "리파인 Positive")
-    wf[neg] = n("CLIPTextEncode", {"clip": [clip, 0], "text": negative}, "리파인 Negative")
+    wf[pos] = node("CLIPTextEncode", {"clip": [clip, 0], "text": positive}, "리파인 Positive")
+    wf[neg] = node("CLIPTextEncode", {"clip": [clip, 0], "text": negative}, "리파인 Negative")
     # 좌우 이음새: 오른쪽 끝에 왼쪽 앞부분(E px)을 이어 붙여 넓힌 뒤 타일을 돌리면
     # 이음새를 가로지르는 타일이 생겨 양쪽이 같은 타일에서 그려짐 → 끝나고 그 부분을 왼쪽에 서서히 섞어 되돌림
     W0, E = W, (min(tile, W) if wrap else 0)
     if E:
         p0, p1, p2, p3 = nid(), nid(), nid(), nid()
-        wf[p0] = n("EmptyImage", {"width": W + E, "height": H, "batch_size": 1, "color": 0}, "리파인 이음새 패딩")
-        wf[p1] = n("ImageCompositeMasked", {"destination": [p0, 0], "source": src, "x": 0, "y": 0,
+        wf[p0] = node("EmptyImage", {"width": W + E, "height": H, "batch_size": 1, "color": 0}, "리파인 이음새 패딩")
+        wf[p1] = node("ImageCompositeMasked", {"destination": [p0, 0], "source": src, "x": 0, "y": 0,
                                             "resize_source": False}, "원본")
-        wf[p2] = n("ImageCrop", {"image": src, "width": E, "height": H, "x": 0, "y": 0}, "왼쪽 앞부분")
-        wf[p3] = n("ImageCompositeMasked", {"destination": [p1, 0], "source": [p2, 0], "x": W, "y": 0,
+        wf[p2] = node("ImageCrop", {"image": src, "width": E, "height": H, "x": 0, "y": 0}, "왼쪽 앞부분")
+        wf[p3] = node("ImageCompositeMasked", {"destination": [p1, 0], "source": [p2, 0], "x": W, "y": 0,
                                             "resize_source": False}, "오른쪽 끝에 이어 붙임")
         src = [p3, 0]
         W = W + E
@@ -224,31 +231,31 @@ def add_refine(wf: dict, src: list, W: int, H: int, *, unet: str, clip: str, vae
     for y in ys:
         for x in xs:
             crop, enc, smp, dec, msk, fea, comp = (nid() for _ in range(7))
-            wf[crop] = n("ImageCrop", {"image": src, "width": tw, "height": th, "x": x, "y": y}, f"리파인 타일 {x},{y}")
-            wf[enc] = n("VAEEncode", {"pixels": [crop, 0], "vae": [vae, 0]}, "타일 인코드")
-            wf[smp] = n("KSampler", {"model": [unet, 0], "positive": [pos, 0], "negative": [neg, 0],
+            wf[crop] = node("ImageCrop", {"image": src, "width": tw, "height": th, "x": x, "y": y}, f"리파인 타일 {x},{y}")
+            wf[enc] = node("VAEEncode", {"pixels": [crop, 0], "vae": [vae, 0]}, "타일 인코드")
+            wf[smp] = node("KSampler", {"model": [unet, 0], "positive": [pos, 0], "negative": [neg, 0],
                                      "latent_image": [enc, 0], "seed": int(seed), "steps": int(steps),
                                      "cfg": float(cfg), "sampler_name": "euler", "scheduler": "simple",
                                      "denoise": float(denoise)}, "리파인 샘플러")
-            wf[dec] = n("VAEDecode", {"samples": [smp, 0], "vae": [vae, 0]}, "타일 디코드")
-            wf[msk] = n("SolidMask", {"value": 1.0, "width": tw, "height": th}, "타일 마스크")
+            wf[dec] = node("VAEDecode", {"samples": [smp, 0], "vae": [vae, 0]}, "타일 디코드")
+            wf[msk] = node("SolidMask", {"value": 1.0, "width": tw, "height": th}, "타일 마스크")
             fl = overlap // 2 if x > 0 else 0
             fr = overlap // 2 if x + tw < W else 0
             ft = overlap // 2 if y > 0 else 0
             fb = overlap // 2 if y + th < H else 0
-            wf[fea] = n("FeatherMask", {"mask": [msk, 0], "left": fl, "top": ft, "right": fr, "bottom": fb},
+            wf[fea] = node("FeatherMask", {"mask": [msk, 0], "left": fl, "top": ft, "right": fr, "bottom": fb},
                         "타일 경계 페더")
-            wf[comp] = n("ImageCompositeMasked", {"destination": canvas, "source": [dec, 0], "mask": [fea, 0],
+            wf[comp] = node("ImageCompositeMasked", {"destination": canvas, "source": [dec, 0], "mask": [fea, 0],
                                                   "x": x, "y": y, "resize_source": False}, "타일 합성")
             canvas = [comp, 0]
     if E:
         q1, q2, q3, q4, q5 = nid(), nid(), nid(), nid(), nid()
-        wf[q1] = n("ImageCrop", {"image": canvas, "width": W0, "height": H, "x": 0, "y": 0}, "원래 폭으로")
-        wf[q2] = n("ImageCrop", {"image": canvas, "width": E, "height": H, "x": W0, "y": 0}, "이음새 너머 부분")
-        wf[q3] = n("SolidMask", {"value": 1.0, "width": E, "height": H}, "이음새 섞기 마스크")
-        wf[q4] = n("FeatherMask", {"mask": [q3, 0], "left": 0, "top": 0, "right": E, "bottom": 0},
+        wf[q1] = node("ImageCrop", {"image": canvas, "width": W0, "height": H, "x": 0, "y": 0}, "원래 폭으로")
+        wf[q2] = node("ImageCrop", {"image": canvas, "width": E, "height": H, "x": W0, "y": 0}, "이음새 너머 부분")
+        wf[q3] = node("SolidMask", {"value": 1.0, "width": E, "height": H}, "이음새 섞기 마스크")
+        wf[q4] = node("FeatherMask", {"mask": [q3, 0], "left": 0, "top": 0, "right": E, "bottom": 0},
                    "왼쪽 1 → 오른쪽 0")
-        wf[q5] = n("ImageCompositeMasked", {"destination": [q1, 0], "source": [q2, 0], "mask": [q4, 0],
+        wf[q5] = node("ImageCompositeMasked", {"destination": [q1, 0], "source": [q2, 0], "mask": [q4, 0],
                                             "x": 0, "y": 0, "resize_source": False}, "이음새 이어지게 섞기")
         canvas = [q5, 0]
     return canvas
@@ -294,4 +301,21 @@ def green_seam_band(api: dict, ids: dict, st: dict) -> bool:
             api[seam_pos]["inputs"]["text"] = SEAM_TRIGGER + " " + t
     if str(ids.get("sampler_seam")) in api:
         api[str(ids["sampler_seam"])]["inputs"]["denoise"] = 1.0        # 초록을 완전히 채워야 함
+    return True
+
+
+
+def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
+    """1차 샘플러(31)의 latent 에 노이즈 마스크를 걸어 사진 부분 latent 를 그대로 유지."""
+    smp = str(ids.get("sampler_main"))
+    if smp not in api:
+        return False
+    lat = api[smp]["inputs"].get("latent_image")
+    if not isinstance(lat, list):
+        return False
+    api["950"] = {"class_type": "LoadImageMask", "inputs": {"image": mask_image, "channel": "red"},
+                  "_meta": {"title": "생성할 곳 마스크 (사진 영역 유지)"}}
+    api["951"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": lat, "mask": ["950", 0]},
+                  "_meta": {"title": "사진 영역은 다시 그리지 않음"}}
+    api[smp]["inputs"]["latent_image"] = ["951", 0]
     return True

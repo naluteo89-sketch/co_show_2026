@@ -7,11 +7,11 @@ Pano360 Studio 실행 파일
 
 구성
     main.py      실행 (여기)
-    api.py       외부 API 전부: 키 읽기 · OpenAI · ComfyUI
+    credentials.py / openai_client.py / comfy.py  키 읽기 · 외부 통신
     server.py    웹 화면·라우트
     llm.py       LLM 지시문 · 스키마 · 프롬프트 조립
     erp.py       ERP 컨트롤 이미지 계산
-    workflow.py  test.json → API 포맷 변환
+    workflow.py  ComfyUI UI 워크플로 → API 포맷 변환
     config.json  설정 (키 경로, 모델, ComfyUI 주소, 노드 번호)
 """
 
@@ -24,10 +24,11 @@ import webbrowser
 
 from aiohttp import web
 
-import api
+from credentials import resolve_keys
 import server
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+VERSION = "2026-10-20 keep-v3 (원본 사진 영역 유지 + 초록 이음새 + 이음새 리파인)"
 
 
 def load_config(path):
@@ -50,18 +51,20 @@ def main():
     a = ap.parse_args()
 
     cfg = load_config(a.config)
-    keys = api.resolve_keys(cfg, HERE)
+    keys = resolve_keys(cfg, HERE)
 
     if not os.path.isfile(cfg["workflow"]):
         sys.exit(f"[pano360] 워크플로 파일이 없어요: {cfg['workflow']}")
 
     url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '::') else a.host}:{a.port}"
+    print(f"[pano360] 버전 {VERSION}")
     print(f"[pano360] {url}")
     print(f"[pano360] 모델 {cfg['openai_model']} · 워크플로 {cfg['workflow']}")
     print(f"[pano360] OpenAI 키: {'OK' if keys['openai'] else '없음'} / Comfy Cloud 키: {'OK' if keys['comfy_cloud'] else '없음'}")
     for n, b in cfg["backends"].items():
         print(f"[pano360] ComfyUI '{n}': {b.get('label', n)} → {b['url']}")
 
+    cfg["version"] = VERSION
     app = server.create_app(cfg, keys)
 
     if not a.no_browser:

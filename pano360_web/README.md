@@ -3,7 +3,7 @@
 사진 한 장 → **LLM(OpenAI)이 프롬프트·배치 분석** → ERP 컨트롤 이미지 → **ComfyUI(로컬/Comfy Cloud)** → 360 이미지
 
 프롬프트를 사람이 매번 쓰는 대신, LLM이 사진을 보고 재료(장면·조명·네거티브·이음새 요소·수평선·화각)를 JSON으로 주면
-서버가 검증된 고정 문구(LoRA 트리거, 조명 일관성, 공통 네거티브)와 합쳐 `test.json` 워크플로에 넣어 실행합니다.
+서버가 고정 문구(LoRA 트리거, 조명 일관성, 공통 네거티브)와 합쳐 `test_quest3.json` 워크플로에 넣어 실행합니다.
 
 ## 흐름
 ```
@@ -11,15 +11,15 @@
   1 사진 업로드 ─▶ EXIF 화각 읽기
   2 LLM 분석   ─▶ OpenAI Responses API (이미지 + JSON 스키마) ─▶ 프롬프트 4종 + yaw/pitch/hFOV
   3 확인·수정   ─▶ 컨트롤 이미지 미리보기 (erp_control_maker.html 과 동일 계산)
-  4 생성        ─▶ 컨트롤 PNG 업로드 → test.json 을 API 포맷으로 변환·주입 → /prompt
+  4 생성        ─▶ 컨트롤 PNG 업로드 → test_quest3.json 을 API 포맷으로 변환·주입 → /prompt
   5 결과        ─▶ 최종 360 한 장 (8K PNG + Quest용 JPG) + 브라우저 360 뷰어
 ```
 모든 시도는 `runs/<날짜-시간>/meta.json`에 프롬프트·배치·시드·결과와 함께 남아서 비교하고 다시 불러올 수 있어요.
 
 ## 설치·실행 (Windows)
 1. `pano360_web` 폴더를 `C:\co_show_2026\` 안에 둡니다 (워크플로는 `../test_quest3.json`).
-2. ComfyUI 파이썬으로 실행하면 추가 설치가 없습니다 (aiohttp, Pillow, numpy).
-   일반 파이썬이면: `pip install aiohttp pillow numpy`
+2. Python 3.10 이상을 사용합니다. `pano360_web` 폴더에서 `python -m pip install -r requirements.txt`로 의존성을 설치합니다.
+   ComfyUI 파이썬을 쓰는 경우에도 aiohttp, Pillow, numpy가 설치되어 있는지 확인합니다.
 3. 키는 `C:\keydata`에서 자동으로 읽어요 (`config.json`):
    - `openai_key_file`: `C:\keydata\gpt_key` · 변수 `open_Aikey`
    - `comfy_cloud_key_file`: `C:\keydata\comfy_key` · 변수 `comfy_key`
@@ -107,17 +107,45 @@
 
 ## (선택) 공식 Comfy Cloud 주의
 - Cloud에 `flux-2-klein-base-4b-fp8`, `qwen_3_4b`, `flux2-vae`, **`flux-2-klein-4B-360-erp-outpaint-lora_V1`** 가 있어야 해요 (LoRA 업로드 여부 확인).
-- 사용 API: `/api/upload/image`, `/api/prompt`, `/api/job/{id}/status`, `/api/view`, `wss://.../ws` (공식 문서상 v1 Cloud API는 deprecated — 바뀌면 `api.py`의 `CLOUD_PATHS`·`ComfyCloud`만 고치면 됨).
-- 결과는 웹소켓으로만 와서, 생성 중에 서버를 끄면 그 시도의 결과를 못 받아요. 끝나는 즉시 `runs/` 에 저장돼요.
+- 현재 구현의 API 경로: `/api/upload/image`, `/api/prompt`, `/api/job/{id}/status`, `/api/view`, `wss://.../ws`. 경로 변경은 `comfy.py`의 `CLOUD_PATHS`·`ComfyCloud`에서 관리합니다.
+- 웹소켓으로 결과를 수신하고, 누락되면 history 조회를 시도합니다. 서버의 상태 API가 호출될 때 결과를 `runs/`에 저장합니다. 브라우저를 닫거나 다른 작업으로 이동하면 해당 작업의 조회가 중단되므로 다시 열어 완료 여부를 확인하세요.
 
 ## 파일
 ```
-main.py        실행 (python main.py)
-api.py         외부 API 전부 — 키 읽기 · OpenAI · ComfyUI (주소/경로 상수도 여기)
-server.py      웹 화면·라우트
-llm.py         LLM 지시문 · 응답 스키마 · 프롬프트 조립
-erp.py         ERP 컨트롤 이미지, EXIF 화각, 수평선→pitch
-workflow.py    UI 워크플로 → API 포맷 변환, 값 주입
-static/        웹페이지 (360 뷰어 포함)
-runs/          작업 기록 (자동 생성)
+main.py                  실행·설정 로딩 (python main.py)
+server.py                HTTP 라우트·작업 단계 조율·결과 후처리
+storage.py               작업 경로 검사·meta.json 읽기·원자적 저장
+credentials.py           환경변수·로컬 키 파일 읽기
+openai_client.py         OpenAI Responses 요청·응답 처리
+comfy.py                 ComfyUI·Comfy Cloud 통신·모델 선택·웹소켓 수명 관리
+api.py                   이전 import api 호출용 호환 진입점 (중복 구현 없음)
+llm.py                   LLM 지시문·응답 스키마·프롬프트 조립
+erp.py                   ERP 투영·극점 회전·사진 합성·JPG 저장
+workflow.py              생성·화질 개선·극점 보정 그래프 구성
+static/index.html        화면 구조
+static/style.css         화면 스타일
+static/app.js            업로드·분석·생성·결과 UI
+static/api.js            브라우저의 JSON 요청·오류 처리
+static/poller.js         작업 상태 조회·취소·늦은 응답 차단
+static/viewer.js         WebGL 360 뷰어
+requirements.txt         Python 의존성
+tests/                   서버 통합·워크플로·저장·폴링 회귀 검사
+runs/                    작업 기록 (자동 생성)
 ```
+
+## 구조 정리와 검증
+
+- 기존 `api.py`와 `comfy.py`에 있던 ComfyUI 구현을 `comfy.py` 하나로 통합했습니다. 이전 이름 `LocalComfy`, `CloudComfy`는 같은 클래스를 가리키는 호환 별칭입니다.
+- 생성·화질 개선·극점 보정의 화면 제출과 진행률 처리를 공유합니다. 상태 조회는 이전 요청이 끝난 뒤 예약하여 느린 서버에 중복 요청이 쌓이지 않게 합니다.
+- 작업을 전환하면 상태 조회와 미리보기 예약을 중단하고, 이전 화면의 늦은 응답을 무시합니다.
+- 같은 작업의 분석·생성 제출·결과 저장은 서버 프로세스 안에서 순서대로 처리합니다. 여러 서버 프로세스가 같은 `runs/`를 공유하는 구성은 지원하지 않습니다.
+- 실행 명령, API 경로, `config.json`, 기존 작업 기록 형식은 유지합니다. HTML은 서버 주소로 열어야 합니다.
+
+`pano360_web` 폴더에서:
+
+```powershell
+python -m unittest discover -s tests -v
+node --test tests/poller.test.mjs
+```
+
+서버 테스트는 임시 작업 폴더와 가짜 ComfyUI 백엔드를 사용합니다. 업로드, 생성 결과 저장, 동시 요청, 극점 보정 두 단계, Unity 폴더 복사 및 정적 모듈 제공을 검사하며 실제 API 키나 GPU 작업은 사용하지 않습니다. 폴링 테스트는 Node.js 22.7 이상을 사용합니다. 실제 ComfyUI 생성 품질·브라우저 WebGL 렌더링·Quest 재생은 별도 확인 대상입니다.

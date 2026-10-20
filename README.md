@@ -51,12 +51,17 @@ co_show_2026/
 │  ├─ run.bat                  Windows 실행용
 │  ├─ config.json              모델·백엔드·워크플로·저장 위치 설정
 │  ├─ server.py                업로드·분석·생성·결과 저장·Unity 전달 API
-│  ├─ api.py                   키 로딩, OpenAI 및 ComfyUI 외부 통신
+│  ├─ credentials.py           키 파일·환경변수 로딩
+│  ├─ openai_client.py         OpenAI 이미지 분석 통신
+│  ├─ comfy.py                 ComfyUI·Comfy Cloud 통신, 진행률·모델 선택
+│  ├─ api.py                   기존 import를 위한 호환 진입점
+│  ├─ storage.py               작업 경로 검사와 meta.json 저장
 │  ├─ llm.py                   분석 스키마와 프롬프트 조립
 │  ├─ erp.py                   EXIF, ERP 투영, Quest용 JPG 저장
 │  ├─ workflow.py              UI 워크플로의 API 형식 변환과 값 주입
-│  ├─ comfy.py                 별도 백엔드 코드, 현재 진입점에서 사용하지 않음
-│  ├─ static/index.html        제작 화면과 WebGL 360도 뷰어
+│  ├─ static/                  HTML·CSS·화면 로직·API·폴링·WebGL 뷰어 모듈
+│  ├─ tests/                   외부 API 없이 실행하는 서버·폴링 회귀 검사
+│  ├─ requirements.txt         Python 의존성
 │  └─ runs/                    실행 후 생성되는 작업·결과 기록
 └─ Pano360Viewer/
    ├─ README.md                Unity 설정·빌드·조작 상세

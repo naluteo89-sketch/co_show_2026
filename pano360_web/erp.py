@@ -321,3 +321,18 @@ def wrap_seam_score(img_path) -> dict:
     wrap = float(np.abs(a[:, 0] - a[:, -1]).mean())
     normal = float(np.median(np.abs(np.diff(a, axis=1)).mean(0))) + 1e-3
     return {"wrap": round(wrap, 1), "normal": round(normal, 1), "ratio": round(wrap / normal, 2)}
+
+
+
+# ----------------------------------------------------------------------------- 원본 사진 보존
+def keep_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, feather=0.04) -> Image.Image:
+    """생성 때 '다시 그릴 곳' 마스크 (흰색=생성, 검정=원본 사진 유지). 사진 가장자리 feather 만큼은 섞어 그림."""
+    sw, sh = photo_size
+    u, v, f = _photo_coords(W, H, np.arange(H), yaw, pitch, hfov, sh / sw, vfov)
+    w, _ = _edge_weight(u, v, f, feather)
+    return Image.fromarray(((1.0 - w) * 255).astype(np.uint8), "L").convert("RGB")
+
+
+def paste_photo(final_img: Image.Image, photo: Image.Image, yaw, pitch, hfov, vfov=None, feather=0.05) -> Image.Image:
+    """최종 결과에 원본 사진을 원래 해상도로 다시 붙임 (가장자리는 부드럽게)."""
+    return photo_composite(final_img, photo, yaw, pitch, hfov, vfov, feather=feather, color_strength=0.0)

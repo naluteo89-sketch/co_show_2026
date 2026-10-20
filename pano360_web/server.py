@@ -1,9 +1,10 @@
 """
 웹 화면·라우트 (Pano360 Studio)
-실행은 main.py 에서 합니다. 외부 API 호출은 모두 api.py 에 있어요.
+실행은 main.py, 외부 통신은 openai_client.py와 comfy.py, 작업 저장은 storage.py에서 관리합니다.
 """
 
 import asyncio
+from functools import wraps
 import io
 import json
 import os
@@ -15,7 +16,9 @@ import aiohttp
 from aiohttp import web
 from PIL import Image
 
-import api
+import comfy
+from openai_client import OpenAIClient
+from storage import RunStore, InvalidRunPath
 import erp
 import llm
 import workflow
@@ -28,49 +31,43 @@ def jresp(obj, status=200):
     return web.json_response(obj, status=status, dumps=lambda o: json.dumps(o, ensure_ascii=False))
 
 
+def serialized_run(handler):
+    """같은 작업의 분석·제출·결과 저장이 이전 meta.json을 덮어쓰지 않게 한다."""
+    @wraps(handler)
+    async def wrapped(self, req):
+        run_id = req.match_info.get("run_id")
+        if run_id is None:
+            run_id = (await req.json())["run_id"]
+        self.store.path(run_id)
+        async with self.locks.setdefault(run_id, asyncio.Lock()):
+            return await handler(self, req)
+    return wrapped
+
+
 class Studio:
     def __init__(self, cfg, keys):
         self.cfg = cfg
         self.keys = keys
         self.openai = None
-        self.runs = cfg["runs_dir"]
-        os.makedirs(self.runs, exist_ok=True)
+        self.store = RunStore(cfg["runs_dir"])
         self.s = None
         self.backends = {}
         self.locks = {}
 
     async def startup(self, app):
         self.s = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=15))
-        self.openai = api.OpenAIClient(self.s, self.keys["openai"], self.cfg["openai_model"])
-        self.backends = api.make_backends(self.s, self.cfg["backends"], self.keys, self.cfg.get("model_fallbacks"),
+        self.openai = OpenAIClient(self.s, self.keys["openai"], self.cfg["openai_model"])
+        self.backends = comfy.make_backends(self.s, self.cfg["backends"], self.keys, self.cfg.get("model_fallbacks"),
                                          self.cfg.get("distilled_profile"),
                                          self.cfg.get("ultrasharp_blend"))
 
     async def cleanup(self, app):
-        for b in self.backends.values():
-            if b._ws_task:
-                b._ws_task.cancel()
-        await self.s.close()
-
-    # ------------------------------------------------------------------ 파일 헬퍼
-    def rdir(self, run_id, *p):
-        if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id:
-            raise web.HTTPBadRequest(text="bad run id")
-        d = os.path.join(self.runs, run_id, *p)
-        return d
-
-    def read_meta(self, run_id):
-        with open(self.rdir(run_id, "meta.json"), encoding="utf-8") as f:
-            return json.load(f)
-
-    def write_meta(self, run_id, meta):
-        tmp = self.rdir(run_id, "meta.json.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, self.rdir(run_id, "meta.json"))
+        await asyncio.gather(*(b.close() for b in self.backends.values()))
+        if self.s is not None:
+            await self.s.close()
 
     def source(self, run_id):
-        return erp.load_upright(self.rdir(run_id, "source" + self.read_meta(run_id)["source_ext"]))
+        return erp.load_upright(self.store.path(run_id, "source" + self.store.read(run_id)["source_ext"]))
 
     # ------------------------------------------------------------------ API
     async def config(self, req):
@@ -105,21 +102,22 @@ class Studio:
         except Exception:
             return jresp({"error": "이미지 파일을 읽을 수 없어요."}, 400)
         run_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
-        os.makedirs(self.rdir(run_id))
+        os.makedirs(self.store.path(run_id))
         ext = os.path.splitext(f.filename or "")[1].lower() or ".jpg"
-        with open(self.rdir(run_id, "source" + ext), "wb") as out:
+        with open(self.store.path(run_id, "source" + ext), "wb") as out:
             out.write(data)
         meta = {"run_id": run_id, "original_name": f.filename, "source_ext": ext,
                 "width": img.width, "height": img.height,
                 "exif_hfov": erp.exif_hfov(io.BytesIO(data)), "attempts": [],
                 "is_erp": abs(img.width / img.height - 2.0) < 0.02}     # 이미 360(2:1) 이미지인지
-        self.write_meta(run_id, meta)
+        self.store.write(run_id, meta)
         return jresp(meta)
 
+    @serialized_run
     async def analyze(self, req):
         p = await req.json()
         run_id = p["run_id"]
-        meta = self.read_meta(run_id)
+        meta = self.store.read(run_id)
         img = self.source(run_id)
         try:
             model = p.get("model") or self.cfg["openai_model"]
@@ -140,31 +138,42 @@ class Studio:
         prompts = llm.assemble(a)
         meta.update(analysis=a, placement=placement, prompts=prompts, note=p.get("note", ""),
                     usage=usage, model=model)
-        self.write_meta(run_id, meta)
+        self.store.write(run_id, meta)
         return jresp({"analysis": a, "placement": placement, "prompts": prompts, "model": model, "usage": usage})
 
     def _control(self, run_id, pl, name="control.png"):
         W, H = self.cfg.get("erp_size", [2048, 1024])
         img = erp.make_control(self.source(run_id), float(pl["yaw"]), float(pl["pitch"]), float(pl["hfov"]),
                                float(pl["vfov"]) if pl.get("vfov") else None, W, H)
-        path = self.rdir(run_id, name)
+        path = self.store.path(run_id, name)
         img.save(path, optimize=False)
         return path
+
+    def _keep_mask(self, run_id, pl, name, feather):
+        W, H = self.cfg.get("erp_size", [2048, 1024])
+        src = self.source(run_id)
+        m = erp.keep_mask(src.size, float(pl["yaw"]), float(pl["pitch"]), float(pl["hfov"]),
+                          float(pl["vfov"]) if pl.get("vfov") else None, W, H, feather)
+        path = self.store.path(run_id, name)
+        m.save(path)
+        with open(path, "rb") as f:
+            return f.read()
 
     async def control(self, req):
         p = await req.json()
         await asyncio.to_thread(self._control, p["run_id"], p["placement"])
         return jresp({"url": f"/runs/{p['run_id']}/control.png?t={time.time():.0f}"})
 
+    @serialized_run
     async def generate(self, req):
         p = await req.json()
         run_id, bk = p["run_id"], p.get("backend") or next(iter(self.backends), "")
         backend = self.backends.get(bk)
         if backend is None:
             return jresp({"error": f"'{bk}' 백엔드를 사용할 수 없어요. config.json 의 backends 를 확인해 주세요."}, 400)
-        meta = self.read_meta(run_id)
+        meta = self.store.read(run_id)
         n = len(meta["attempts"]) + 1
-        adir = self.rdir(run_id, f"a{n:02d}")
+        adir = self.store.path(run_id, f"a{n:02d}")
         os.makedirs(adir, exist_ok=True)
 
         mode = p.get("mode", "generate")
@@ -174,7 +183,7 @@ class Studio:
             if mode == "pole":                        # 발밑·하늘 보정 (1단계: 돌린 ERP 인페인트)
                 wf_api, seeds, out_nodes, extra = await self._start_pole(run_id, n, meta, p, backend)
             elif mode == "enhance":                   # 이미 360 → 화질 개선만
-                with open(self.rdir(run_id, "source" + meta["source_ext"]), "rb") as f:
+                with open(self.store.path(run_id, "source" + meta["source_ext"]), "rb") as f:
                     src_bytes = f.read()
                 name = await backend.upload(src_bytes, f"{run_id}_a{n:02d}_erp_source{meta['source_ext']}")
                 wf_api = workflow.build_enhance(name, meta["width"], meta["height"], prefix=f"VR360/{run_id}_a{n:02d}",
@@ -185,31 +194,41 @@ class Studio:
                 with open(ctrl_path, "rb") as f:
                     ctrl_bytes = f.read()
                 name = await backend.upload(ctrl_bytes, f"{run_id}_a{n:02d}_erp_control.png")
+                kp = self.cfg.get("keep_photo", {})
+                mask_name = None
+                if kp.get("enabled", True):          # 사진 영역은 그대로 두고 초록 부분만 생성
+                    mask_bytes = await asyncio.to_thread(self._keep_mask, run_id, p["placement"], f"a{n:02d}/keep_mask.png",
+                                                         kp.get("mask_feather", 0.04))
+                    mask_name = await backend.upload(mask_bytes, f"{run_id}_a{n:02d}_keep_mask.png")
                 tmpl = workflow.load_template(self.cfg["workflow"])
                 st = self._settings(p, meta, p["prompts"].get("positive", ""))
                 wf_api, seeds = workflow.build(tmpl, self.cfg["node_ids"], control_image=name, prompts=p["prompts"],
                                                seed1=p.get("seed1"), seed2=p.get("seed2"),
-                                               prefix=f"VR360/{run_id}_a{n:02d}", settings=st)
+                                               prefix=f"VR360/{run_id}_a{n:02d}", settings=st, keep_mask=mask_name)
                 p["settings"] = {k: v for k, v in st.items() if k != "refine"}
-            try:
-                pid = await backend.submit(wf_api)      # 제출 전에 모델 이름을 서버 목록에 맞춰 고침
-            finally:                                    # 성공/실패 모두 실제로 보낸 워크플로 저장
-                with open(os.path.join(adir, "workflow_api.json"), "w", encoding="utf-8") as f:
-                    json.dump(wf_api, f, ensure_ascii=False, indent=1)
+            pid = await self._submit_workflow(backend, wf_api, os.path.join(adir, "workflow_api.json"))
         except Exception as e:
             msg = str(e)
             with open(os.path.join(adir, "error.txt"), "w", encoding="utf-8") as f:
                 f.write(msg)
             print(f"[pano360] 생성 요청 실패 ({run_id} a{n:02d}):\n{msg}")
-            return jresp({"error": api.explain_comfy_error(msg)}, 502)
+            return jresp({"error": comfy.explain_comfy_error(msg)}, 502)
 
         meta["attempts"].append({"n": n, "backend": bk, "prompt_id": pid, "mode": mode, "out_nodes": out_nodes,
                                  **(extra if mode == "pole" else {}),
                                  "placement": p.get("placement") or {}, "prompts": p.get("prompts") or {},
                                  "settings": p.get("settings") or {}, "seeds": seeds, "state": "queued",
                                  "files": [], "created": time.strftime("%Y-%m-%d %H:%M:%S")})
-        self.write_meta(run_id, meta)
+        self.store.write(run_id, meta)
         return jresp({"attempt": n, "prompt_id": pid, "seeds": seeds})
+
+    async def _submit_workflow(self, backend, graph, path):
+        try:
+            return await backend.submit(graph)
+        finally:
+            # 모델 이름 자동 조정 후 실제 제출한 그래프를 실패한 경우에도 보관한다.
+            with open(path, "w", encoding="utf-8") as fp:
+                json.dump(graph, fp, ensure_ascii=False, indent=1)
 
     def _settings(self, p, meta, positive=""):
         """화면 설정 + config 기본값 + 리파인(LoRA 없는 디테일 패스) 프롬프트."""
@@ -247,10 +266,10 @@ class Studio:
             files = prev.get("files", [])
             f = next((x for x in files if x.get("final")), None) or next((x for x in files if x["tag"] == "2k"), None)
             if f:
-                return self.rdir(run_id, *f["url"].split("/")[3:])
+                return self.store.path(run_id, *f["url"].split("/")[3:])
             raise RuntimeError(f"#{from_n} 시도에 결과 이미지가 없어요.")
         if meta.get("is_erp"):
-            return self.rdir(run_id, "source" + meta["source_ext"])
+            return self.store.path(run_id, "source" + meta["source_ext"])
         raise RuntimeError("보정할 360 이미지가 없어요. 생성 결과가 있는 시도를 골라 주세요.")
 
     async def _start_pole(self, run_id, n, meta, p, backend):
@@ -263,13 +282,13 @@ class Studio:
             ww = int(pc["work_width"])
             work = base if base.width == ww else base.resize((ww, ww // 2), Image.LANCZOS)
             rot, mask = erp.pole_prepare(work, pc["nadir_cap"], pc["zenith_cap"], pc["feather"])
-            work.save(self.rdir(run_id, aprefix, "pole_base.png"))
-            rot.save(self.rdir(run_id, aprefix, "pole_rot.png"))
-            mask.save(self.rdir(run_id, aprefix, "pole_mask.png"))
+            work.save(self.store.path(run_id, aprefix, "pole_base.png"))
+            rot.save(self.store.path(run_id, aprefix, "pole_rot.png"))
+            mask.save(self.store.path(run_id, aprefix, "pole_mask.png"))
         await asyncio.to_thread(prep)
 
         def rd(name):
-            with open(self.rdir(run_id, aprefix, name), "rb") as f:
+            with open(self.store.path(run_id, aprefix, name), "rb") as f:
                 return f.read()
         rot_name = await backend.upload(rd("pole_rot.png"), f"{run_id}_{aprefix}_pole_rot.png")
         mask_name = await backend.upload(rd("pole_mask.png"), f"{run_id}_{aprefix}_pole_mask.png")
@@ -290,29 +309,28 @@ class Studio:
         aprefix = f"a{n:02d}"
         f = next(x for x in st["files"] if x["node"] == "210")
         data = await backend.fetch(f)
-        with open(self.rdir(run_id, aprefix, "pole_rot_out.png"), "wb") as out:
+        with open(self.store.path(run_id, aprefix, "pole_rot_out.png"), "wb") as out:
             out.write(data)
         pc = att["pole"]
 
         def merge():
-            base = Image.open(self.rdir(run_id, aprefix, "pole_base.png"))
-            rep = Image.open(self.rdir(run_id, aprefix, "pole_rot_out.png"))
+            base = Image.open(self.store.path(run_id, aprefix, "pole_base.png"))
+            rep = Image.open(self.store.path(run_id, aprefix, "pole_rot_out.png"))
             merged = erp.pole_merge(base, rep, pc["nadir_cap"], pc["zenith_cap"], pc["feather"])
-            merged.save(self.rdir(run_id, aprefix, "result_2k.png"))
+            merged.save(self.store.path(run_id, aprefix, "result_2k.png"))
             return merged.size
         W, H = await asyncio.to_thread(merge)
-        with open(self.rdir(run_id, aprefix, "result_2k.png"), "rb") as fp:
+        with open(self.store.path(run_id, aprefix, "result_2k.png"), "rb") as fp:
             name = await backend.upload(fp.read(), f"{run_id}_{aprefix}_pole_fixed.png")
-        meta = self.read_meta(run_id)
+        meta = self.store.read(run_id)
         wf = workflow.build_enhance(name, W, H, prefix=f"VR360/{run_id}_{aprefix}", **self._enhance_kwargs(meta))
-        pid = await backend.submit(wf)
-        with open(self.rdir(run_id, aprefix, "workflow_api_stage2.json"), "w", encoding="utf-8") as fp:
-            json.dump(wf, fp, ensure_ascii=False, indent=1)
+        pid = await self._submit_workflow(backend, wf, self.store.path(run_id, aprefix, "workflow_api_stage2.json"))
         att.update(stage=2, prompt_id=pid, out_nodes={"final": "15"})   # 중간 파일은 폴더에만 두고 결과는 한 장
 
+    @serialized_run
     async def status(self, req):
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        meta = self.read_meta(run_id)
+        meta = self.store.read(run_id)
         att = meta["attempts"][n - 1]
         if att["state"] in ("done", "error"):
             return jresp(att)
@@ -321,60 +339,66 @@ class Studio:
         out_nodes = att.get("out_nodes") or {"final": str(ids["save_final"])}
         st = await backend.status(att["prompt_id"], list(out_nodes.values()))
         if st["state"] == "done" and att.get("mode") == "pole" and att.get("stage") == 1:
-            lock = self.locks.setdefault((run_id, n), asyncio.Lock())
-            async with lock:
-                meta = self.read_meta(run_id)
-                att = meta["attempts"][n - 1]
-                if att.get("stage") == 1:
-                    try:
-                        await self._pole_stage2(run_id, n, att, backend, st)
-                    except Exception as e:
-                        att.update(state="error", error=f"극점 합성/8K 단계 실패: {e}")
-                    self.write_meta(run_id, meta)
+            meta = self.store.read(run_id)
+            att = meta["attempts"][n - 1]
+            if att.get("stage") == 1:
+                try:
+                    await self._pole_stage2(run_id, n, att, backend, st)
+                except Exception as e:
+                    att.update(state="error", error=f"극점 합성/8K 단계 실패: {e}")
+                self.store.write(run_id, meta)
             return jresp({**att, "state": att["state"] if att["state"] == "error" else "running",
                           "node_title": "극점 합성 → 8K 화질 개선 시작", "value": 0, "max": 0})
         if st["state"] == "done":
-            lock = self.locks.setdefault((run_id, n), asyncio.Lock())
-            async with lock:
-                meta = self.read_meta(run_id)
-                att = meta["attempts"][n - 1]
-                if att["state"] != "done":
-                    files = []
-                    final_tag = self.cfg.get("final_tag", "final")
-                    for f in [x for x in st["files"] if x["node"] == out_nodes["final"]][:1]:
-                        tag = final_tag
-                        local = f"a{n:02d}/result_{tag}.png"
-                        data = await backend.fetch(f)
-                        with open(self.rdir(run_id, local), "wb") as out:
-                            out.write(data)
-                        tm = float(self.cfg.get("tone_match", 0))
-                        if tm > 0 and att.get("mode", "generate") == "generate" and not meta.get("is_erp"):
-                            # 생성 결과의 밝기·대비·색을 원본 사진 쪽으로 (그림 같은 밝고 평평한 톤 완화)
-                            raw = self.rdir(run_id, f"a{n:02d}/result_{tag}_raw.png")
-                            os.replace(self.rdir(run_id, local), raw)
+            meta = self.store.read(run_id)
+            att = meta["attempts"][n - 1]
+            if att["state"] != "done":
+                files = []
+                final_tag = self.cfg.get("final_tag", "final")
+                for f in [x for x in st["files"] if x["node"] == out_nodes["final"]][:1]:
+                    tag = final_tag
+                    local = f"a{n:02d}/result_{tag}.png"
+                    data = await backend.fetch(f)
+                    with open(self.store.path(run_id, local), "wb") as out:
+                        out.write(data)
+                    tm = float(self.cfg.get("tone_match", 0))
+                    if tm > 0 and att.get("mode", "generate") == "generate" and not meta.get("is_erp"):
+                        # 생성 결과의 밝기·대비·색을 원본 사진 쪽으로 (그림 같은 밝고 평평한 톤 완화)
+                        raw = self.store.path(run_id, f"a{n:02d}/result_{tag}_raw.png")
+                        os.replace(self.store.path(run_id, local), raw)
 
-                            def _tone(raw=raw, dst=self.rdir(run_id, local)):
-                                erp.tone_match(Image.open(raw), self.source(run_id), tm).save(dst)
-                            await asyncio.to_thread(_tone)
-                            att["tone_match"] = tm
-                        try:
-                            att["seam"] = await asyncio.to_thread(erp.wrap_seam_score, self.rdir(run_id, local))
-                            print(f"[pano360] 좌우 이음새 {att['seam']}")
-                        except Exception as e:
-                            print(f"[pano360] 이음새 측정 실패: {e}")
-                        item = {"tag": tag, "url": f"/runs/{run_id}/{local}", "final": tag == final_tag}
-                        if tag == final_tag:          # Quest 용 JPG (용량 1/5, 로딩 빠름)
-                            jpg = f"a{n:02d}/{run_id}_a{n:02d}_{tag}.jpg"
-                            await asyncio.to_thread(erp.save_quest_jpg, self.rdir(run_id, local), self.rdir(run_id, jpg),
-                                                    self.cfg.get("jpg_quality", 95))
-                            item["jpg"] = f"/runs/{run_id}/{jpg}"
-                        files.append(item)
-                    att.update(state="done", files=files, finished=time.strftime("%Y-%m-%d %H:%M:%S"))
-                    self.write_meta(run_id, meta)
+                        def _tone(raw=raw, dst=self.store.path(run_id, local)):
+                            erp.tone_match(Image.open(raw), self.source(run_id), tm).save(dst)
+                        await asyncio.to_thread(_tone)
+                        att["tone_match"] = tm
+                    kp = self.cfg.get("keep_photo", {})
+                    pl = att.get("placement") or {}
+                    if kp.get("enabled", True) and att.get("mode", "generate") == "generate" and pl.get("hfov"):
+                        # 원본 사진을 원래 해상도로 같은 자리에 다시 붙임 → 사진에 있던 건 절대 안 사라짐
+                        def _paste(dst=self.store.path(run_id, local)):
+                            erp.paste_photo(Image.open(dst), self.source(run_id), float(pl["yaw"]), float(pl["pitch"]),
+                                            float(pl["hfov"]), float(pl["vfov"]) if pl.get("vfov") else None,
+                                            kp.get("paste_feather", 0.05)).save(dst)
+                        await asyncio.to_thread(_paste)
+                        att["photo_pasted"] = True
+                    try:
+                        att["seam"] = await asyncio.to_thread(erp.wrap_seam_score, self.store.path(run_id, local))
+                        print(f"[pano360] 좌우 이음새 {att['seam']}")
+                    except Exception as e:
+                        print(f"[pano360] 이음새 측정 실패: {e}")
+                    item = {"tag": tag, "url": f"/runs/{run_id}/{local}", "final": tag == final_tag}
+                    if tag == final_tag:          # Quest 용 JPG (용량 1/5, 로딩 빠름)
+                        jpg = f"a{n:02d}/{run_id}_a{n:02d}_{tag}.jpg"
+                        await asyncio.to_thread(erp.save_quest_jpg, self.store.path(run_id, local), self.store.path(run_id, jpg),
+                                                self.cfg.get("jpg_quality", 95))
+                        item["jpg"] = f"/runs/{run_id}/{jpg}"
+                    files.append(item)
+                att.update(state="done", files=files, finished=time.strftime("%Y-%m-%d %H:%M:%S"))
+                self.store.write(run_id, meta)
             return jresp(att)
         if st["state"] == "error":
             att.update(state="error", error=st["error"])
-            self.write_meta(run_id, meta)
+            self.store.write(run_id, meta)
             return jresp(att)
         node = st.get("node")
         return jresp({**att, "state": st["state"], "node": node,
@@ -384,7 +408,7 @@ class Studio:
     async def to_viewer(self, req):
         """최종 JPG 를 Unity 뷰어 StreamingAssets 에 복사하고 photos.json 갱신."""
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        att = self.read_meta(run_id)["attempts"][n - 1]
+        att = self.store.read(run_id)["attempts"][n - 1]
         f = next((x for x in att.get("files", []) if x.get("jpg")), None)
         if not f:
             return jresp({"error": "Quest 용 JPG 가 없어요."}, 400)
@@ -392,7 +416,7 @@ class Studio:
         vdir = vdir if os.path.isabs(vdir) else os.path.normpath(os.path.join(HERE, vdir))
         if not os.path.isdir(vdir):
             return jresp({"error": f"뷰어 폴더가 없어요: {vdir}"}, 400)
-        src = self.rdir(run_id, *f["jpg"].split("/")[3:])
+        src = self.store.path(run_id, *f["jpg"].split("/")[3:])
         name = os.path.basename(src)
         await asyncio.to_thread(shutil.copyfile, src, os.path.join(vdir, name))
         lst = os.path.join(vdir, "photos.json")
@@ -409,9 +433,9 @@ class Studio:
 
     async def list_runs(self, req):
         out = []
-        for rid in sorted(os.listdir(self.runs), reverse=True)[:100]:
+        for rid in sorted(os.listdir(self.store.root), reverse=True)[:100]:
             try:
-                m = self.read_meta(rid)
+                m = self.store.read(rid)
             except Exception:
                 continue
             out.append({"run_id": rid, "name": m.get("original_name"), "attempts": len(m["attempts"]),
@@ -421,15 +445,23 @@ class Studio:
         return jresp(out)
 
     async def get_run(self, req):
-        return jresp(self.read_meta(req.match_info["run_id"]))
+        return jresp(self.store.read(req.match_info["run_id"]))
 
     async def index(self, req):
         return web.FileResponse(os.path.join(HERE, "static", "index.html"))
 
 
+@web.middleware
+async def path_errors(request, handler):
+    try:
+        return await handler(request)
+    except InvalidRunPath as exc:
+        return jresp({"error": str(exc)}, 400)
+
+
 def create_app(cfg, keys) -> web.Application:
     st = Studio(cfg, keys)
-    app = web.Application(client_max_size=200 * 1024 * 1024)
+    app = web.Application(client_max_size=200 * 1024 * 1024, middlewares=[path_errors])
     app.on_startup.append(st.startup)
     app.on_cleanup.append(st.cleanup)
     app.add_routes([
