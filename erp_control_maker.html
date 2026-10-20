@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERP 컨트롤 이미지 만들기</title>
+<style>
+  :root { --bg:#12161c; --panel:#1a2029; --line:#2c3542; --ink:#e4e9f0; --muted:#8d99a8; --accent:#7cc4e8; color-scheme: dark; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px "Malgun Gothic", system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 16px; max-width:70ch; line-height:1.5; }
+  .row { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-bottom:12px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+  input[type=number] { width:90px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:6px; font:inherit; }
+  button, .file { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:8px 12px; cursor:pointer; font:inherit; }
+  button.primary { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.4; cursor:default; }
+  canvas { width:100%; max-width:1024px; height:auto; border:1px solid var(--line); display:block; image-rendering:auto; }
+  .note { font-size:12px; color:var(--muted); margin-top:8px; }
+</style>
+</head>
+<body>
+<h1>ERP 컨트롤 이미지 만들기</h1>
+<p>원본 사진을 핀홀(원근) 투영으로 2048×1024 등장방형 캔버스에 붙이고, 빈 곳은 #00ff00 초록으로 채웁니다.
+ComfyUI-Panorama-Stickers 노드가 하던 일과 같습니다. 만든 PNG를 Comfy Cloud의 "Upload ERP control image" 노드에 업로드하세요.</p>
+
+<div class="row">
+  <label>원본 사진<input type="file" id="file" accept="image/*" class="file"></label>
+  <label>yaw (°, +오른쪽)<input type="number" id="yaw" value="-19.97" step="1"></label>
+  <label>pitch (°, +위)<input type="number" id="pitch" value="-2.30" step="1"></label>
+  <label>가로 화각 hFOV (°)<input type="number" id="hfov" value="96.94" step="1" min="10" max="170"></label>
+  <label>세로 화각 vFOV (°, 비우면 비율로 계산)<input type="number" id="vfov" value="" step="1" min="10" max="170"></label>
+  <button id="go" disabled>다시 만들기</button>
+  <button id="save" class="primary" disabled>PNG 저장</button>
+</div>
+<canvas id="out" width="2048" height="1024"></canvas>
+<div class="note" id="info">기본값은 기존 워크플로의 배치(yaw -20°, pitch -2.3°, hFOV 97°)입니다.</div>
+
+<script>
+const W = 2048, H = 1024, GREEN = [0, 255, 0];
+const $ = (id) => document.getElementById(id);
+let img = null, name = 'source';
+
+$('file').addEventListener('change', (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  name = f.name.replace(/\.[^.]+$/, '');
+  const url = URL.createObjectURL(f);
+  const im = new Image();
+  im.onload = () => { img = im; $('go').disabled = false; $('save').disabled = false; render(); };
+  im.src = url;
+});
+$('go').addEventListener('click', render);
+['yaw', 'pitch', 'hfov', 'vfov'].forEach((id) => $(id).addEventListener('change', () => img && render()));
+
+function render() {
+  const rad = Math.PI / 180;
+  const yaw = +$('yaw').value * rad, pitch = +$('pitch').value * rad;
+  const hf = +$('hfov').value * rad;
+  const aspect = img.naturalHeight / img.naturalWidth;
+  const th = Math.tan(hf / 2);
+  const tv = $('vfov').value ? Math.tan(+$('vfov').value * rad / 2) : th * aspect;
+
+  // Pre-shrink the source to roughly its on-panorama size to avoid aliasing.
+  const targetW = Math.min(img.naturalWidth, Math.ceil(hf / (2 * Math.PI) * W * 1.5));
+  const s = document.createElement('canvas');
+  s.width = targetW; s.height = Math.max(1, Math.round(targetW * aspect));
+  const sg = s.getContext('2d'); sg.imageSmoothingQuality = 'high';
+  sg.drawImage(img, 0, 0, s.width, s.height);
+  const src = sg.getImageData(0, 0, s.width, s.height).data, sw = s.width, sh = s.height;
+
+  const ctx = $('out').getContext('2d');
+  const out = ctx.createImageData(W, H), o = out.data;
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  for (let y = 0; y < H; y++) {
+    const lat = (0.5 - (y + 0.5) / H) * Math.PI;
+    const cl = Math.cos(lat), sl = Math.sin(lat);
+    for (let x = 0; x < W; x++) {
+      const lon = ((x + 0.5) / W - 0.5) * 2 * Math.PI;
+      let dx = cl * Math.sin(lon), dy = sl, dz = cl * Math.cos(lon);
+      // undo yaw (around y), then undo pitch (around x)
+      const x1 = dx * cy - dz * sy, z1 = dx * sy + dz * cy;
+      const y2 = dy * cp - z1 * sp, z2 = dy * sp + z1 * cp;
+      const i = (y * W + x) * 4;
+      let r = GREEN[0], g = GREEN[1], b = GREEN[2];
+      if (z2 > 1e-6) {
+        const u = x1 / (z2 * th), v = y2 / (z2 * tv);
+        if (u >= -1 && u <= 1 && v >= -1 && v <= 1) {
+          const px = (u + 1) / 2 * sw - 0.5, py = (1 - v) / 2 * sh - 0.5;
+          const x0 = Math.max(0, Math.min(sw - 1, Math.floor(px))), y0 = Math.max(0, Math.min(sh - 1, Math.floor(py)));
+          const xa = Math.min(sw - 1, x0 + 1), ya = Math.min(sh - 1, y0 + 1);
+          const fx = Math.max(0, Math.min(1, px - x0)), fy = Math.max(0, Math.min(1, py - y0));
+          const p00 = (y0 * sw + x0) * 4, p10 = (y0 * sw + xa) * 4, p01 = (ya * sw + x0) * 4, p11 = (ya * sw + xa) * 4;
+          const lerp = (c) => (src[p00 + c] * (1 - fx) + src[p10 + c] * fx) * (1 - fy) + (src[p01 + c] * (1 - fx) + src[p11 + c] * fx) * fy;
+          const a = lerp(3) / 255;
+          r = lerp(0) * a + GREEN[0] * (1 - a); g = lerp(1) * a + GREEN[1] * (1 - a); b = lerp(2) * a + GREEN[2] * (1 - a);
+        }
+      }
+      o[i] = r; o[i + 1] = g; o[i + 2] = b; o[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+  $('info').textContent = `원본 ${img.naturalWidth}×${img.naturalHeight} · vFOV ${(2 * Math.atan(tv) / rad).toFixed(1)}° · 출력 2048×1024`;
+}
+
+$('save').addEventListener('click', () => {
+  $('out').toBlob((blob) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name}_erp_control_2048.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }, 'image/png');
+});
+</script>
+</body>
+</html>

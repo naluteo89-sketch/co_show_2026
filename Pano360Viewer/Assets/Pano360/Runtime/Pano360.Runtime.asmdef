@@ -1,0 +1,28 @@
+{
+    "name": "Pano360.Runtime",
+    "rootNamespace": "Pano360",
+    "references": [
+        "Unity.XR.Hands",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.xr.hands",
+            "expression": "1.0.0",
+            "define": "PANO_XR_HANDS"
+        },
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "1.0.0",
+            "define": "PANO_INPUTSYSTEM"
+        }
+    ],
+    "noEngineReferences": false
+}

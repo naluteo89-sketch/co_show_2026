@@ -1,0 +1,2222 @@
+{
+  "id": "1b85a654-7069-4036-9c4b-de783ef72744",
+  "revision": 0,
+  "last_node_id": 108,
+  "last_link_id": 166,
+  "nodes": [
+    {
+      "id": 6,
+      "type": "CLIPTextEncode",
+      "pos": [
+        558.7,
+        160.4
+      ],
+      "size": [
+        425.27,
+        167.94
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 63
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            70
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Positive Prompt)",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.39"
+      },
+      "widgets_values": [
+        "Fill the green spaces according to the image. Outpaint as a seamless 360 equirectangular panorama (2:1). Keep the horizon level. Match left and right edges. Seungseongyo Bridge in Suncheon, Korea: a traditional stone arch bridge over a rocky mountain stream, natural boulders and riverbed, dense green forest, overhanging tree branches, wooded valley. Same natural daytime lighting as the reference photo everywhere: identical sun direction, exposure, white balance and color grading across the full 360 degrees, soft daylight, clear consistent sky. Photorealistic raw photo."
+      ],
+      "widgets_values_named": {
+        "text": "Fill the green spaces according to the image. Outpaint as a seamless 360 equirectangular panorama (2:1). Keep the horizon level. Match left and right edges. Seungseongyo Bridge in Suncheon, Korea: a traditional stone arch bridge over a rocky mountain stream, natural boulders and riverbed, dense green forest, overhanging tree branches, wooded valley. Same natural daytime lighting as the reference photo everywhere: identical sun direction, exposure, white balance and color grading across the full 360 degrees, soft daylight, clear consistent sky. Photorealistic raw photo."
+      }
+    },
+    {
+      "id": 8,
+      "type": "VAEDecode",
+      "pos": [
+        1629.58,
+        324.04
+      ],
+      "size": [
+        161.11,
+        46
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 52
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 62
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            141,
+            142,
+            143,
+            162
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecode",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.39"
+      }
+    },
+    {
+      "id": 31,
+      "type": "KSampler",
+      "pos": [
+        1236.36,
+        98.58
+      ],
+      "size": [
+        315,
+        262
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 94
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 71
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 83
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 74
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            52
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "KSampler",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.39"
+      },
+      "widgets_values": [
+        12345,
+        "fixed",
+        25,
+        4.0,
+        "euler",
+        "simple",
+        1
+      ],
+      "widgets_values_named": {
+        "seed": 12345,
+        "control_after_generate": "fixed",
+        "steps": 25,
+        "cfg": 4.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1
+      }
+    },
+    {
+      "id": 33,
+      "type": "CLIPTextEncode",
+      "pos": [
+        558.7,
+        387.25
+      ],
+      "size": [
+        425.27,
+        123
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 64
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            83
+          ]
+        }
+      ],
+      "title": "CLIP Text Encode (Negative Prompt)",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.39"
+      },
+      "widgets_values": [
+        "night, dusk, sunset, twilight, dark sky, stars, moon, artificial lights, day-night split, inconsistent lighting, different time of day, exposure mismatch, brightness gradient, color shift, color cast, green tint, desaturated area, visible seams, mismatched lighting, distorted bridge geometry, duplicated rocks, duplicated trees, repeated textures, artificial structures, invented architectural details, unnatural water flow, warped perspective, blurry edges, low quality, out of frame, sky on the bottom, floating objects, mismatched colors, hard edges, text, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, black borders, broken horizon, warped architecture, duplicated objects, duplicate people"
+      ],
+      "widgets_values_named": {
+        "text": "night, dusk, sunset, twilight, dark sky, stars, moon, artificial lights, day-night split, inconsistent lighting, different time of day, exposure mismatch, brightness gradient, color shift, color cast, green tint, desaturated area, visible seams, mismatched lighting, distorted bridge geometry, duplicated rocks, duplicated trees, repeated textures, artificial structures, invented architectural details, unnatural water flow, warped perspective, blurry edges, low quality, out of frame, sky on the bottom, floating objects, mismatched colors, hard edges, text, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, black borders, broken horizon, warped architecture, duplicated objects, duplicate people"
+      }
+    },
+    {
+      "id": 43,
+      "type": "VAELoader",
+      "pos": [
+        518.64,
+        848.53
+      ],
+      "size": [
+        269.83,
+        58
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            62,
+            76,
+            114,
+            126
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.39"
+      },
+      "widgets_values": [
+        "flux2-vae.safetensors"
+      ],
+      "widgets_values_named": {
+        "vae_name": "flux2-vae.safetensors"
+      },
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 44,
+      "type": "CLIPLoader",
+      "pos": [
+        224.5,
+        292.67
+      ],
+      "size": [
+        283.8,
+        106
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            63,
+            64,
+            111,
+            112
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPLoader",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.73"
+      },
+      "widgets_values": [
+        "qwen_3_4b.safetensors",
+        "flux2",
+        "default"
+      ],
+      "widgets_values_named": {
+        "clip_name": "qwen_3_4b.safetensors",
+        "type": "flux2",
+        "device": "default"
+      },
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 48,
+      "type": "UNETLoader",
+      "pos": [
+        613.17,
+        -10.56
+      ],
+      "size": [
+        308.16,
+        82
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            93
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader",
+        "cnr_id": "comfy-core",
+        "ver": "0.9.2"
+      },
+      "widgets_values": [
+        "flux-2-klein-base-4b-fp8.safetensors",
+        "default"
+      ],
+      "widgets_values_named": {
+        "unet_name": "flux-2-klein-base-4b-fp8.safetensors",
+        "weight_dtype": "default"
+      },
+      "color": "#323",
+      "bgcolor": "#535"
+    },
+    {
+      "id": 49,
+      "type": "ReferenceLatent",
+      "pos": [
+        1021.28,
+        160.4
+      ],
+      "size": [
+        204.13,
+        46
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 70
+        },
+        {
+          "name": "latent",
+          "shape": 7,
+          "type": "LATENT",
+          "link": 75
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            71
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ReferenceLatent",
+        "cnr_id": "comfy-core",
+        "ver": "0.9.2"
+      }
+    },
+    {
+      "id": 52,
+      "type": "VAEEncode",
+      "pos": [
+        821.97,
+        579.55
+      ],
+      "size": [
+        162,
+        46
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pixels",
+          "type": "IMAGE",
+          "link": 166
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 76
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            74,
+            75
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEEncode",
+        "cnr_id": "comfy-core",
+        "ver": "0.9.2"
+      }
+    },
+    {
+      "id": 58,
+      "type": "PreviewImage",
+      "pos": [
+        1856.55,
+        -292.49
+      ],
+      "size": [
+        370.85,
+        310.25
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 162
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      }
+    },
+    {
+      "id": 63,
+      "type": "LoraLoaderModelOnly",
+      "pos": [
+        954.65,
+        -10.56
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 93
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            94,
+            121
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoraLoaderModelOnly",
+        "cnr_id": "comfy-core",
+        "ver": "0.15.0"
+      },
+      "widgets_values": [
+        "flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors",
+        0.95
+      ],
+      "widgets_values_named": {
+        "lora_name": "flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors",
+        "strength_model": 0.95
+      },
+      "color": "#323",
+      "bgcolor": "#535"
+    },
+    {
+      "id": 67,
+      "type": "MarkdownNote",
+      "pos": [
+        106.61,
+        -49.35
+      ],
+      "size": [
+        401.69,
+        256.25
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "## Square to 360, then seam repair (efficient)\nUpload a square source image. The outpaint pass makes a 2048x1024 ERP.\nThe second pass centers the wrap boundary, repairs a 512px band, then restores orientation.\nThe 4K output is Lanczos resized once at the end, not newly generated detail.\nCLIP device is set to default (GPU). Seam denoise 0.8, steps 14.\n\n**Comfy Cloud version:** Panorama-Stickers replaced.\n1. Open erp_control_maker.html locally, load the square photo, save the 2048x1024 PNG.\n2. Upload that PNG to the 'Upload ERP control image' node.\n- First-pass prompt must start with the LoRA trigger text (kept in node 6).\n- Seam shift = crop halves + swap; seam mask = SolidMask + MaskComposite (+ FeatherMask 128px)."
+      ],
+      "widgets_values_named": {
+        "text": "## Square to 360, then seam repair (efficient)\nUpload a square source image. The outpaint pass makes a 2048x1024 ERP.\nThe second pass centers the wrap boundary, repairs a 512px band, then restores orientation.\nThe 4K output is Lanczos resized once at the end, not newly generated detail.\nCLIP device is set to default (GPU). Seam denoise 0.8, steps 14.\n\n**Comfy Cloud version:** Panorama-Stickers replaced.\n1. Open erp_control_maker.html locally, load the square photo, save the 2048x1024 PNG.\n2. Upload that PNG to the 'Upload ERP control image' node.\n- First-pass prompt must start with the LoRA trigger text (kept in node 6).\n- Seam shift = crop halves + swap; seam mask = SolidMask + MaskComposite (+ FeatherMask 128px)."
+      },
+      "color": "#323",
+      "bgcolor": "#535"
+    },
+    {
+      "id": 71,
+      "type": "LoadImage",
+      "pos": [
+        -182.87,
+        533.69
+      ],
+      "size": [
+        315,
+        320
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            166
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "slot_index": 1,
+          "links": null
+        }
+      ],
+      "title": "Upload ERP control image (2048x1024, from erp_control_maker.html)",
+      "properties": {
+        "Node name for S&R": "LoadImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "3647_15844_249_erp_control_2048.png",
+        "image"
+      ],
+      "widgets_values_named": {
+        "image": "3647_15844_249.jpg",
+        "upload": "image"
+      }
+    },
+    {
+      "id": 77,
+      "type": "CLIPTextEncode",
+      "pos": [
+        1529.62,
+        419.94
+      ],
+      "size": [
+        320,
+        190
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 111
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            115
+          ]
+        }
+      ],
+      "title": "Describe the continuous scene",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "Repair only the central vertical seam of this 360 equirectangular panorama. Seamlessly continue the stone arch bridge, rocky stream, natural boulders, riverbed, forest vegetation and wooded valley across the band. Match the brightness, white balance, color and daylight of both sides exactly; the band must not be darker or lighter than its neighbors. Photorealistic, no visible join."
+      ],
+      "widgets_values_named": {
+        "text": "Repair only the central vertical seam of this 360 equirectangular panorama. Seamlessly continue the stone arch bridge, rocky stream, natural boulders, riverbed, forest vegetation and wooded valley across the band. Match the brightness, white balance, color and daylight of both sides exactly; the band must not be darker or lighter than its neighbors. Photorealistic, no visible join."
+      }
+    },
+    {
+      "id": 78,
+      "type": "CLIPTextEncode",
+      "pos": [
+        1056.93,
+        943.66
+      ],
+      "size": [
+        320,
+        160
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 112
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            116
+          ]
+        }
+      ],
+      "title": "Avoid a hard boundary",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "night, dusk, sunset, twilight, dark sky, stars, moon, artificial lights, day-night split, inconsistent lighting, different time of day, exposure mismatch, brightness gradient, color shift, color cast, green tint, desaturated area, split screen, vertical dividing line, hard edge, disconnected path, broken fence, sudden road-to-grass boundary, duplicated trees, mismatched horizon, text, watermark"
+      ],
+      "widgets_values_named": {
+        "text": "night, dusk, sunset, twilight, dark sky, stars, moon, artificial lights, day-night split, inconsistent lighting, different time of day, exposure mismatch, brightness gradient, color shift, color cast, green tint, desaturated area, split screen, vertical dividing line, hard edge, disconnected path, broken fence, sudden road-to-grass boundary, duplicated trees, mismatched horizon, text, watermark"
+      }
+    },
+    {
+      "id": 79,
+      "type": "VAEEncode",
+      "pos": [
+        2764.94,
+        210.11
+      ],
+      "size": [
+        250,
+        100
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pixels",
+          "type": "IMAGE",
+          "link": 152
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 114
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            117,
+            119
+          ]
+        }
+      ],
+      "title": "Encode shifted ERP",
+      "properties": {
+        "Node name for S&R": "VAEEncode",
+        "cnr_id": "comfy-core"
+      }
+    },
+    {
+      "id": 80,
+      "type": "ReferenceLatent",
+      "pos": [
+        1776.73,
+        767.2
+      ],
+      "size": [
+        285,
+        100
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 115
+        },
+        {
+          "name": "latent",
+          "shape": 7,
+          "type": "LATENT",
+          "link": 117
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "slot_index": 0,
+          "links": [
+            122
+          ]
+        }
+      ],
+      "title": "Reference the shifted panorama",
+      "properties": {
+        "Node name for S&R": "ReferenceLatent",
+        "cnr_id": "comfy-core"
+      }
+    },
+    {
+      "id": 82,
+      "type": "SetLatentNoiseMask",
+      "pos": [
+        3330,
+        100
+      ],
+      "size": [
+        283.46,
+        100
+      ],
+      "flags": {},
+      "order": 20,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 119
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 154
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            124
+          ]
+        }
+      ],
+      "title": "Regenerate only the hard seam band",
+      "properties": {
+        "Node name for S&R": "SetLatentNoiseMask",
+        "cnr_id": "comfy-core"
+      }
+    },
+    {
+      "id": 83,
+      "type": "KSampler",
+      "pos": [
+        2542.0,
+        655.6
+      ],
+      "size": [
+        310,
+        270
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 121
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 122
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 116
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 124
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "slot_index": 0,
+          "links": [
+            125
+          ]
+        }
+      ],
+      "title": "Inpaint the central seam",
+      "properties": {
+        "Node name for S&R": "KSampler",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        2941602,
+        "fixed",
+        25,
+        4.0,
+        "euler",
+        "simple",
+        0.75
+      ],
+      "widgets_values_named": {
+        "seed": 2941602,
+        "control_after_generate": "fixed",
+        "steps": 25,
+        "cfg": 4.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 0.75
+      }
+    },
+    {
+      "id": 84,
+      "type": "VAEDecode",
+      "pos": [
+        3121.84,
+        434.4
+      ],
+      "size": [
+        190,
+        100
+      ],
+      "flags": {},
+      "order": 22,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 125
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 126
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            128
+          ]
+        }
+      ],
+      "title": "Decode seam repair",
+      "properties": {
+        "Node name for S&R": "VAEDecode",
+        "cnr_id": "comfy-core"
+      }
+    },
+    {
+      "id": 85,
+      "type": "ImageCompositeMasked",
+      "pos": [
+        3535.47,
+        376.52
+      ],
+      "size": [
+        300,
+        150
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "destination",
+          "type": "IMAGE",
+          "link": 153
+        },
+        {
+          "name": "source",
+          "type": "IMAGE",
+          "link": 128
+        },
+        {
+          "name": "mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": 155
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            156,
+            157,
+            158
+          ]
+        }
+      ],
+      "title": "Preserve original pixels outside seam",
+      "properties": {
+        "Node name for S&R": "ImageCompositeMasked",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        0,
+        0,
+        false
+      ],
+      "widgets_values_named": {
+        "x": 0,
+        "y": 0,
+        "resize_source": false
+      }
+    },
+    {
+      "id": 87,
+      "type": "PreviewImage",
+      "pos": [
+        3870.63,
+        -29.6
+      ],
+      "size": [
+        370,
+        310
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 163
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Inspect repaired 360 ERP"
+    },
+    {
+      "id": 88,
+      "type": "SaveImage",
+      "pos": [
+        3234.2,
+        1118.51
+      ],
+      "size": [
+        330,
+        270
+      ],
+      "flags": {},
+      "order": 26,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 164
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "title": "Save repaired 2048 ERP",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "VR360/square_to_360_seamfixed"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "VR360/square_to_360_seamfixed"
+      }
+    },
+    {
+      "id": 89,
+      "type": "ImageScale",
+      "pos": [
+        3634.83,
+        956.85
+      ],
+      "size": [
+        310,
+        130
+      ],
+      "flags": {},
+      "order": 27,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 165
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            134
+          ]
+        }
+      ],
+      "title": "4K delivery resize only (single pass)",
+      "properties": {
+        "Node name for S&R": "ImageScale",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "lanczos",
+        4096,
+        2048,
+        "disabled"
+      ],
+      "widgets_values_named": {
+        "upscale_method": "lanczos",
+        "width": 4096,
+        "height": 2048,
+        "crop": "disabled"
+      }
+    },
+    {
+      "id": 90,
+      "type": "SaveImage",
+      "pos": [
+        4078.39,
+        491.26
+      ],
+      "size": [
+        330,
+        270.0
+      ],
+      "flags": {},
+      "order": 28,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 134
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "title": "Save repaired 4K ERP",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "VR360/square_to_360_seamfixed_4k"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "VR360/square_to_360_seamfixed_4k"
+      }
+    },
+    {
+      "id": 96,
+      "type": "ImageCrop",
+      "pos": [
+        2200,
+        -250
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 141
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            144
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCrop",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Move wrap seam to center: right half",
+      "widgets_values": [
+        1024,
+        1024,
+        1024,
+        0
+      ],
+      "widgets_values_named": {
+        "width": 1024,
+        "height": 1024,
+        "x": 1024,
+        "y": 0
+      }
+    },
+    {
+      "id": 97,
+      "type": "ImageCrop",
+      "pos": [
+        2200,
+        -100
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 142
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            146
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCrop",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Move wrap seam to center: left half",
+      "widgets_values": [
+        1024,
+        1024,
+        0,
+        0
+      ],
+      "widgets_values_named": {
+        "width": 1024,
+        "height": 1024,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 98,
+      "type": "ImageCompositeMasked",
+      "pos": [
+        2500,
+        -250
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "destination",
+          "type": "IMAGE",
+          "link": 143
+        },
+        {
+          "name": "source",
+          "type": "IMAGE",
+          "link": 144
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            145
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCompositeMasked",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Move wrap seam to center: right half -> x=0",
+      "widgets_values": [
+        0,
+        0,
+        false
+      ],
+      "widgets_values_named": {
+        "x": 0,
+        "y": 0,
+        "resize_source": false
+      }
+    },
+    {
+      "id": 99,
+      "type": "ImageCompositeMasked",
+      "pos": [
+        2500,
+        -100
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "destination",
+          "type": "IMAGE",
+          "link": 145
+        },
+        {
+          "name": "source",
+          "type": "IMAGE",
+          "link": 146
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            152,
+            153
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCompositeMasked",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Move wrap seam to center: left half -> x=1024",
+      "widgets_values": [
+        1024,
+        0,
+        false
+      ],
+      "widgets_values_named": {
+        "x": 1024,
+        "y": 0,
+        "resize_source": false
+      }
+    },
+    {
+      "id": 100,
+      "type": "SolidMask",
+      "pos": [
+        2200,
+        100
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            147,
+            150
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SolidMask",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Empty mask 2048x1024",
+      "widgets_values": [
+        0.0,
+        2048,
+        1024
+      ],
+      "widgets_values_named": {
+        "value": 0.0,
+        "width": 2048,
+        "height": 1024
+      }
+    },
+    {
+      "id": 101,
+      "type": "SolidMask",
+      "pos": [
+        2200,
+        250
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            148,
+            149
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SolidMask",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Seam band 512px",
+      "widgets_values": [
+        1.0,
+        512,
+        1024
+      ],
+      "widgets_values_named": {
+        "value": 1.0,
+        "width": 512,
+        "height": 1024
+      }
+    },
+    {
+      "id": 102,
+      "type": "MaskComposite",
+      "pos": [
+        2500,
+        100
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "destination",
+          "type": "MASK",
+          "link": 147
+        },
+        {
+          "name": "source",
+          "type": "MASK",
+          "link": 148
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            154
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MaskComposite",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Hard seam mask (center)",
+      "widgets_values": [
+        768,
+        0,
+        "add"
+      ],
+      "widgets_values_named": {
+        "x": 768,
+        "y": 0,
+        "operation": "add"
+      }
+    },
+    {
+      "id": 103,
+      "type": "FeatherMask",
+      "pos": [
+        2500,
+        250
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 149
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            151
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "FeatherMask",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Feather band edges 128px",
+      "widgets_values": [
+        128,
+        0,
+        128,
+        0
+      ],
+      "widgets_values_named": {
+        "left": 128,
+        "top": 0,
+        "right": 128,
+        "bottom": 0
+      }
+    },
+    {
+      "id": 104,
+      "type": "MaskComposite",
+      "pos": [
+        2800,
+        250
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "destination",
+          "type": "MASK",
+          "link": 150
+        },
+        {
+          "name": "source",
+          "type": "MASK",
+          "link": 151
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            155
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MaskComposite",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Soft seam mask (center)",
+      "widgets_values": [
+        768,
+        0,
+        "add"
+      ],
+      "widgets_values_named": {
+        "x": 768,
+        "y": 0,
+        "operation": "add"
+      }
+    },
+    {
+      "id": 105,
+      "type": "ImageCrop",
+      "pos": [
+        3500,
+        700
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 156
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            159
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCrop",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Undo half-width rotation: right half",
+      "widgets_values": [
+        1024,
+        1024,
+        1024,
+        0
+      ],
+      "widgets_values_named": {
+        "width": 1024,
+        "height": 1024,
+        "x": 1024,
+        "y": 0
+      }
+    },
+    {
+      "id": 106,
+      "type": "ImageCrop",
+      "pos": [
+        3500,
+        850
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 157
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            161
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCrop",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Undo half-width rotation: left half",
+      "widgets_values": [
+        1024,
+        1024,
+        0,
+        0
+      ],
+      "widgets_values_named": {
+        "width": 1024,
+        "height": 1024,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 107,
+      "type": "ImageCompositeMasked",
+      "pos": [
+        3800,
+        700
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "destination",
+          "type": "IMAGE",
+          "link": 158
+        },
+        {
+          "name": "source",
+          "type": "IMAGE",
+          "link": 159
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            160
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCompositeMasked",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Undo half-width rotation: right half -> x=0",
+      "widgets_values": [
+        0,
+        0,
+        false
+      ],
+      "widgets_values_named": {
+        "x": 0,
+        "y": 0,
+        "resize_source": false
+      }
+    },
+    {
+      "id": 108,
+      "type": "ImageCompositeMasked",
+      "pos": [
+        3800,
+        850
+      ],
+      "size": [
+        270,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "destination",
+          "type": "IMAGE",
+          "link": 160
+        },
+        {
+          "name": "source",
+          "type": "IMAGE",
+          "link": 161
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            163,
+            164,
+            165
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageCompositeMasked",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.75"
+      },
+      "title": "Undo half-width rotation: left half -> x=1024",
+      "widgets_values": [
+        1024,
+        0,
+        false
+      ],
+      "widgets_values_named": {
+        "x": 1024,
+        "y": 0,
+        "resize_source": false
+      }
+    }
+  ],
+  "links": [
+    [
+      52,
+      31,
+      0,
+      8,
+      0,
+      "LATENT"
+    ],
+    [
+      62,
+      43,
+      0,
+      8,
+      1,
+      "VAE"
+    ],
+    [
+      63,
+      44,
+      0,
+      6,
+      0,
+      "CLIP"
+    ],
+    [
+      64,
+      44,
+      0,
+      33,
+      0,
+      "CLIP"
+    ],
+    [
+      70,
+      6,
+      0,
+      49,
+      0,
+      "CONDITIONING"
+    ],
+    [
+      71,
+      49,
+      0,
+      31,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      74,
+      52,
+      0,
+      31,
+      3,
+      "LATENT"
+    ],
+    [
+      75,
+      52,
+      0,
+      49,
+      1,
+      "LATENT"
+    ],
+    [
+      76,
+      43,
+      0,
+      52,
+      1,
+      "VAE"
+    ],
+    [
+      83,
+      33,
+      0,
+      31,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      93,
+      48,
+      0,
+      63,
+      0,
+      "MODEL"
+    ],
+    [
+      94,
+      63,
+      0,
+      31,
+      0,
+      "MODEL"
+    ],
+    [
+      111,
+      44,
+      0,
+      77,
+      0,
+      "CLIP"
+    ],
+    [
+      112,
+      44,
+      0,
+      78,
+      0,
+      "CLIP"
+    ],
+    [
+      114,
+      43,
+      0,
+      79,
+      1,
+      "VAE"
+    ],
+    [
+      115,
+      77,
+      0,
+      80,
+      0,
+      "CONDITIONING"
+    ],
+    [
+      116,
+      78,
+      0,
+      83,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      117,
+      79,
+      0,
+      80,
+      1,
+      "LATENT"
+    ],
+    [
+      119,
+      79,
+      0,
+      82,
+      0,
+      "LATENT"
+    ],
+    [
+      121,
+      63,
+      0,
+      83,
+      0,
+      "MODEL"
+    ],
+    [
+      122,
+      80,
+      0,
+      83,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      124,
+      82,
+      0,
+      83,
+      3,
+      "LATENT"
+    ],
+    [
+      125,
+      83,
+      0,
+      84,
+      0,
+      "LATENT"
+    ],
+    [
+      126,
+      43,
+      0,
+      84,
+      1,
+      "VAE"
+    ],
+    [
+      128,
+      84,
+      0,
+      85,
+      1,
+      "IMAGE"
+    ],
+    [
+      134,
+      89,
+      0,
+      90,
+      0,
+      "IMAGE"
+    ],
+    [
+      141,
+      8,
+      0,
+      96,
+      0,
+      "IMAGE"
+    ],
+    [
+      142,
+      8,
+      0,
+      97,
+      0,
+      "IMAGE"
+    ],
+    [
+      143,
+      8,
+      0,
+      98,
+      0,
+      "IMAGE"
+    ],
+    [
+      144,
+      96,
+      0,
+      98,
+      1,
+      "IMAGE"
+    ],
+    [
+      145,
+      98,
+      0,
+      99,
+      0,
+      "IMAGE"
+    ],
+    [
+      146,
+      97,
+      0,
+      99,
+      1,
+      "IMAGE"
+    ],
+    [
+      147,
+      100,
+      0,
+      102,
+      0,
+      "MASK"
+    ],
+    [
+      148,
+      101,
+      0,
+      102,
+      1,
+      "MASK"
+    ],
+    [
+      149,
+      101,
+      0,
+      103,
+      0,
+      "MASK"
+    ],
+    [
+      150,
+      100,
+      0,
+      104,
+      0,
+      "MASK"
+    ],
+    [
+      151,
+      103,
+      0,
+      104,
+      1,
+      "MASK"
+    ],
+    [
+      152,
+      99,
+      0,
+      79,
+      0,
+      "IMAGE"
+    ],
+    [
+      153,
+      99,
+      0,
+      85,
+      0,
+      "IMAGE"
+    ],
+    [
+      154,
+      102,
+      0,
+      82,
+      1,
+      "MASK"
+    ],
+    [
+      155,
+      104,
+      0,
+      85,
+      2,
+      "MASK"
+    ],
+    [
+      156,
+      85,
+      0,
+      105,
+      0,
+      "IMAGE"
+    ],
+    [
+      157,
+      85,
+      0,
+      106,
+      0,
+      "IMAGE"
+    ],
+    [
+      158,
+      85,
+      0,
+      107,
+      0,
+      "IMAGE"
+    ],
+    [
+      159,
+      105,
+      0,
+      107,
+      1,
+      "IMAGE"
+    ],
+    [
+      160,
+      107,
+      0,
+      108,
+      0,
+      "IMAGE"
+    ],
+    [
+      161,
+      106,
+      0,
+      108,
+      1,
+      "IMAGE"
+    ],
+    [
+      162,
+      8,
+      0,
+      58,
+      0,
+      "IMAGE"
+    ],
+    [
+      163,
+      108,
+      0,
+      87,
+      0,
+      "IMAGE"
+    ],
+    [
+      164,
+      108,
+      0,
+      88,
+      0,
+      "IMAGE"
+    ],
+    [
+      165,
+      108,
+      0,
+      89,
+      0,
+      "IMAGE"
+    ],
+    [
+      166,
+      71,
+      0,
+      52,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.6209213230591563,
+      "offset": [
+        136.71824264178719,
+        429.5600572880632
+      ]
+    },
+    "frontendVersion": "1.53.6",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "extensions": {
+    "seed_widgets": {
+      "31": 0,
+      "83": 0
+    }
+  },
+  "version": 0.4
+}
