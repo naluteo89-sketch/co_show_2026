@@ -7,6 +7,8 @@ namespace Pano360
     {
         public float distance = 2f;
         public float heightOffset = -0.35f;
+        /// 켜면 고개를 돌려도 계속 정면에 머무름 (홈 화면 안내용)
+        public bool follow;
 
         TextMesh text;
         MeshRenderer rend;
@@ -60,6 +62,7 @@ namespace Pano360
         void Update()
         {
             if (rend.enabled && Time.time > hideAt) rend.enabled = false;
+            if (rend.enabled && follow) Place();
         }
     }
 }

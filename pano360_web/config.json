@@ -1,0 +1,56 @@
+{
+  "openai_model": "gpt-6.1-sol",
+  "openai_models": ["gpt-6.1-sol", "gpt-6-luna", "gpt-5.4-mini", "gpt-5.5"],
+  "env_files": [],
+  "openai_key_file": "C:\\keydata\\gpt_key",
+  "comfy_cloud_key_file": "C:\\keydata\\comfy_key",
+  "openai_key_var": "open_Aikey",
+  "comfy_cloud_key_var": "comfy_key",
+  "backends": {
+    "cloud": {"label": "Comfy 서버 (192.168.1.91)", "type": "comfyui", "url": "http://192.168.1.91:8000"},
+    "local": {"label": "내 PC ComfyUI", "type": "comfyui", "url": "http://127.0.0.1:8188"}
+  },
+  "workflow": "../test_quest3.json",
+  "final_tag": "8k",
+  "jpg_quality": 95,
+  "viewer_dir": "../Pano360Viewer/Assets/StreamingAssets/Pano360",
+  "model_fallbacks": {
+    "UpscaleModelLoader": ["4x_NMKD-Siax_200k.pth", "4xNomos8kSCHAT-L.pth", "4x_foolhardy_Remacri.pth", "RealESRGAN_x4plus.pth", "4x-UltraSharp.pth"]
+  },
+  "quest": {"final_width": 8192, "blend": 0.2, "noise": 0.004},
+  "gen_defaults": {"steps": 25, "cfg": 4.0, "lora_strength": 0.8, "seam_lora_strength": 0.8, "seam_denoise": 1.0},
+  "refine": {"enabled": true, "denoise": 0.3, "steps": 20, "cfg": 3.5, "tile": 1536, "overlap": 192},
+  "pole": {"nadir_cap": 30, "zenith_cap": 22, "feather": 6, "denoise": 0.85, "lora_strength": 0.6, "work_width": 2048},
+  "distilled_profile": {"steps": 4, "partial_steps": 8, "cfg": 1.0},
+  "ultrasharp_blend": 0.45,
+  "tone_match": 0.6,
+  "runs_dir": "runs",
+  "erp_size": [2048, 1024],
+  "default_yaw": -20,
+  "node_ids": {
+    "load_image": 71,
+    "positive": 6,
+    "negative": 33,
+    "seam_positive": 77,
+    "seam_negative": 78,
+    "sampler_main": 31,
+    "sampler_seam": 83,
+    "save_2k": 88,
+    "save_final": 90,
+    "lora": 63,
+    "unet": 48,
+    "clip": 44,
+    "vae": 43
+  },
+  "node_titles": {
+    "31": "360 아웃페인트",
+    "83": "이음새 복원",
+    "8": "디코딩",
+    "84": "디코딩",
+    "89": "Lanczos 8K", "116": "AI 업스케일 x4", "118": "블렌드", "119": "디더",
+    "88": "저장", "208": "발밑·하늘 다시 그리기", "9": "AI 업스케일", "13": "블렌드", "15": "저장",
+    "90": "저장",
+    "48": "모델 로드",
+    "44": "텍스트 인코더 로드"
+  }
+}

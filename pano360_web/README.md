@@ -1,0 +1,123 @@
+# Pano360 Studio
+
+사진 한 장 → **LLM(OpenAI)이 프롬프트·배치 분석** → ERP 컨트롤 이미지 → **ComfyUI(로컬/Comfy Cloud)** → 360 이미지
+
+프롬프트를 사람이 매번 쓰는 대신, LLM이 사진을 보고 재료(장면·조명·네거티브·이음새 요소·수평선·화각)를 JSON으로 주면
+서버가 검증된 고정 문구(LoRA 트리거, 조명 일관성, 공통 네거티브)와 합쳐 `test.json` 워크플로에 넣어 실행합니다.
+
+## 흐름
+```
+[브라우저 :7870]
+  1 사진 업로드 ─▶ EXIF 화각 읽기
+  2 LLM 분석   ─▶ OpenAI Responses API (이미지 + JSON 스키마) ─▶ 프롬프트 4종 + yaw/pitch/hFOV
+  3 확인·수정   ─▶ 컨트롤 이미지 미리보기 (erp_control_maker.html 과 동일 계산)
+  4 생성        ─▶ 컨트롤 PNG 업로드 → test.json 을 API 포맷으로 변환·주입 → /prompt
+  5 결과        ─▶ 최종 360 한 장 (8K PNG + Quest용 JPG) + 브라우저 360 뷰어
+```
+모든 시도는 `runs/<날짜-시간>/meta.json`에 프롬프트·배치·시드·결과와 함께 남아서 비교하고 다시 불러올 수 있어요.
+
+## 설치·실행 (Windows)
+1. `pano360_web` 폴더를 `C:\co_show_2026\` 안에 둡니다 (워크플로는 `../test_quest3.json`).
+2. ComfyUI 파이썬으로 실행하면 추가 설치가 없습니다 (aiohttp, Pillow, numpy).
+   일반 파이썬이면: `pip install aiohttp pillow numpy`
+3. 키는 `C:\keydata`에서 자동으로 읽어요 (`config.json`):
+   - `openai_key_file`: `C:\keydata\gpt_key` · 변수 `open_Aikey`
+   - `comfy_cloud_key_file`: `C:\keydata\comfy_key` · 변수 `comfy_key`
+   - 파일 내용이 키 한 줄이어도, `open_Aikey = "..."` 형식이어도 돼요. 확장자 없으면 .txt/.env/.key/.py 도 찾아요.
+   - 같은 이름의 환경변수가 있으면 그게 우선이에요.
+   그다음 `python main.py` 또는 `run.bat` 더블클릭 (브라우저가 자동으로 열려요). 시작 로그에 `OpenAI 키: OK` 가 떠야 해요.
+4. 브라우저에서 `http://127.0.0.1:7870`
+   - 다른 기기에서 접속하려면 `python main.py --host 0.0.0.0`
+
+## config.json
+| 항목 | 설명 |
+|---|---|
+| `openai_model` | 분석에 쓸 모델. 이미지 입력 + Structured Outputs 지원 모델이어야 함. 환경변수 `OPENAI_MODEL`로 덮어쓰기 가능 |
+| `backends` | 이미지 생성할 ComfyUI 목록. `type: comfyui` = 일반 ComfyUI 서버 (기본: `cloud` → `http://192.168.1.91:8000`, `local` → `http://127.0.0.1:8188`). 공식 Comfy Cloud를 쓰려면 `{"type": "comfy_cloud", "url": "https://cloud.comfy.org"}` 추가 (키: `comfy_cloud_key_file`) |
+| `workflow` | 실행할 워크플로 (UI 포맷 그대로, `widgets_values_named` 필요) |
+| `node_ids` | 값을 넣을 노드 번호. 워크플로를 고치면 여기도 맞추기 |
+| `default_yaw` | 사진을 붙일 가로 방향 (기본 -20°, 기존 워크플로 값) |
+
+## Meta Quest 3 기준 (test_quest3.json)
+| 단계 | 설정 | 이유 |
+|---|---|---|
+| 생성 | 2048×1024 (LoRA 학습 해상도 유지) | 해상도를 올려 생성하면 구도·이음새가 무너짐 |
+| 이음새 패딩 | 좌우 128px 이어붙인 뒤 업스케일 → 잘라냄 | 업스케일러가 좌우 끝을 따로 처리해서 뒤쪽에 세로선이 생기는 것 방지 |
+| AI 업스케일 x4 | NMKD-Siax → Nomos → Remacri → RealESRGAN → UltraSharp 순으로 서버에 있는 것 자동 선택 | 두 눈이 같은 화면을 크게 보므로 과샤픈·헤일로가 바로 티 남 → 자연스러운 계열 우선 |
+| 블렌드 | AI 80% + Lanczos 20% | AI 특유의 질감·테두리 완화 |
+| 디더 | 노이즈 0.004 | Quest LCD에서 하늘 계조 끊김(밴딩) 완화 |
+| 최종 | **8192×4096**, JPG 95 (4:4:4) | 8K ≈ 22.8 px/° ↔ Quest 3 약 25 PPD. 뷰어가 밉맵 없이 LOD0 샘플링이라 16K는 반짝임(에일리어싱), 4K는 흐림 |
+
+결과 화면의 **Quest 뷰어에 추가**를 누르면 JPG가 `Pano360Viewer/Assets/StreamingAssets/Pano360/`에 복사되고 `photos.json`이 갱신돼요 → Unity에서 Build And Run.
+업스케일 순서는 `config.json`의 `model_fallbacks`에서 바꿀 수 있어요.
+
+## 화질 개선 메모 (2026-10-20 점검)
+기존 결과(2048×1024)에서 확인된 문제와 대응:
+| 문제 | 원인 추정 | 대응 |
+|---|---|---|
+| 기름그림 같은 과한 질감·테두리 헤일로 | CFG 4.0 과조리, 프롬프트에 억제어 없음 | 네거티브에 `HDR look, oversharpened, halos…` 추가. 화면 '생성 설정'에서 CFG 3.0~3.5 비교 권장 |
+| 하늘이 하얗게 날아감 (상단 15% 평균 248/255, 화면의 10%가 거의 흰색) | 안개 낀 장면 + 노출 일관성 문구 | LLM이 하늘 상태를 구체적으로 쓰도록 지시, 네거티브 `overexposed sky, blown-out highlights` |
+| 발밑(아래쪽)이 늘어지고 뭉개짐 | 등장방형 극점 + 생성 해상도 한계 | LLM이 발밑 바닥 재질을 구체적으로 쓰도록 지시. '발밑·하늘 보정' 버튼으로 해결 (아래 참고) |
+| 이미 360인 이미지를 올리면 사진처럼 다시 붙여서 망가짐 | 입력 판별 없음 | 2:1 이미지는 자동 감지 → **8K 화질 개선만** 실행 |
+| x2 업스케일 모델이 선택되면 8K 크롭이 어긋남 | 배율 고정 가정 | 업스케일 뒤 크기를 정확히 다시 맞추는 노드 추가 (x2/x4 모두 대응) |
+
+비교 실험은 시드를 고정하고 설정을 하나씩 바꿔 보세요. 각 시도의 설정이 `meta.json`과 화면 기록에 남아요.
+
+## 업스케일 블러·LoRA 영향 줄이기 (리파인 패스)
+- **Lanczos 블렌드 제거**: 8K에 단순 확대본을 20~45% 섞던 단계가 블러의 원인 → 생성 모드·8K 화질 개선에서 제거.
+- **디테일 리파인 (LoRA 없음)**: AI 업스케일한 8K를 1536px 타일 18장(겹침 192px)으로 나눠, LoRA 없이 기본 모델로
+  약하게(denoise 0.3) 다시 그림 → 업스케일러의 뭉개짐 대신 실제 질감. 프롬프트는 "고해상도 사진" + LLM 장면 묘사,
+  네거티브에 painting/illustration/cartoon/flat colors 등. (`config.json` → `refine`, 끄려면 `"enabled": false`)
+- **LoRA 강도**: 1차 생성 0.95 → **0.8**, 이음새 복원은 별도 LoRA **0.6** (`gen_defaults.lora_strength`, `seam_lora_strength`).
+- 증류 모델이면 부분 재생성(이음새·리파인)은 8스텝, 전체 생성은 4스텝 (`distilled_profile`).
+- 리파인은 시간이 걸려요 (타일 18장). 빠르게 확인만 할 땐 `refine.enabled`를 false로.
+
+## 좌우 이음새 (360 뒤쪽 세로선)
+- 원인: 이음새 복원 단계가 이음새가 그대로 있는 그림을 참조로 받아, 편집 모델(FLUX Klein)이 이음새까지 그대로 다시 그림
+  (측정: 이음새 색 차이 39 vs 일반 이웃 8.7 → 4.5배).
+- 해결 1: 이음새 띠(512px)를 **초록(#00ff00)으로 칠해** 아웃페인트 LoRA가 학습한 방식("Fill the green spaces…")으로 채움.
+  denoise 1.0 고정, 이음새 LoRA 0.8.
+- 해결 2: 8K 리파인 타일이 좌우 끝을 따로 그리지 않도록, 오른쪽 끝에 왼쪽 앞부분을 이어 붙여 이음새를 가로지르는
+  타일을 만들고 끝나면 부드럽게 되돌림 (시뮬레이션: 이음새 차이 17 → 1.8).
+- 결과 화면에 **좌우 이음새 점수**(×배율, 2 이하 양호) 표시. 3.5를 넘으면 다시 생성 권장.
+
+## 발밑·하늘 보정 (극점 보정 패스)
+결과 화면의 **발밑·하늘 보정 + 8K** (또는 360 이미지를 올렸을 때 같은 버튼):
+1. 2K 360 이미지를 90° 굴려 발밑은 왼쪽, 하늘 꼭대기는 오른쪽 **적도 위**로 옮김 → 늘어짐 없이 보임
+2. 두 원(발밑 반경 30°+4°, 하늘 22°+4°)만 같은 모델로 다시 그림 (denoise 0.85, LoRA 0.6). LLM이 쓴 `ground_below` / `sky_above` 묘사 사용
+3. 되돌려서 극점 부분만 6° 페더로 합성 → 가운데(수평선 부근)는 픽셀 하나도 안 바뀜
+4. 이어서 자동으로 8K 화질 개선 → Quest용 JPG
+- 결과는 최종 360 **한 장**(8K)만 나와요. 보정 전/중간 파일은 `runs/<작업>/aNN/` 폴더에만 남아요(`pole_base.png` = 보정 전 2K).
+- 범위·강도는 `config.json` 의 `pole` 에서 조정 (`nadir_cap`, `zenith_cap`, `denoise`, `lora_strength`).
+- 작업 파일: `pole_rot.png`(돌린 이미지), `pole_mask.png`(다시 그릴 부분), `pole_rot_out.png`(모델 결과)
+
+## LLM이 정하는 것 / 고정된 것
+| LLM (사진마다 다름) | 고정 (llm.py 상단) |
+|---|---|
+| 장면 묘사(카메라 뒤·바닥·하늘 포함), 조명 표현, 피해야 할 조명, 장면별 실패 요소, 이음새에서 이어질 요소, 수평선 위치, 화각 추정, 한국어 요약·주의점 | LoRA 트리거 문장, 조명 일관성 문장, 공통 네거티브, 이음새 프롬프트 틀 |
+
+- 화각: EXIF 35mm 환산 초점거리가 있으면 그걸 우선 사용, 없으면 LLM 추정
+- pitch: LLM이 찾은 수평선 위치와 화각으로 계산
+- 품질을 올리려면 `llm.py`의 `SYSTEM` 지시문을 다듬는 게 가장 효과적이에요. 결과가 좋았던 시도의 meta.json 을 예시로 넣는 것도 좋아요.
+
+## 192.168.1.91 ComfyUI 서버 주의
+- 그 PC의 ComfyUI가 외부 접속을 허용해야 해요 (ComfyUI Desktop: 설정 > Server-Config > Host `0.0.0.0` / 포터블: `--listen 0.0.0.0 --port 8000`).
+- 브라우저에서 `http://192.168.1.91:8000` 이 열리면 연결 가능한 상태예요.
+- 그 서버에 FLUX.2 Klein 모델, qwen_3_4b, flux2-vae, 360 LoRA 파일이 있어야 해요.
+
+## (선택) 공식 Comfy Cloud 주의
+- Cloud에 `flux-2-klein-base-4b-fp8`, `qwen_3_4b`, `flux2-vae`, **`flux-2-klein-4B-360-erp-outpaint-lora_V1`** 가 있어야 해요 (LoRA 업로드 여부 확인).
+- 사용 API: `/api/upload/image`, `/api/prompt`, `/api/job/{id}/status`, `/api/view`, `wss://.../ws` (공식 문서상 v1 Cloud API는 deprecated — 바뀌면 `api.py`의 `CLOUD_PATHS`·`ComfyCloud`만 고치면 됨).
+- 결과는 웹소켓으로만 와서, 생성 중에 서버를 끄면 그 시도의 결과를 못 받아요. 끝나는 즉시 `runs/` 에 저장돼요.
+
+## 파일
+```
+main.py        실행 (python main.py)
+api.py         외부 API 전부 — 키 읽기 · OpenAI · ComfyUI (주소/경로 상수도 여기)
+server.py      웹 화면·라우트
+llm.py         LLM 지시문 · 응답 스키마 · 프롬프트 조립
+erp.py         ERP 컨트롤 이미지, EXIF 화각, 수평선→pitch
+workflow.py    UI 워크플로 → API 포맷 변환, 값 주입
+static/        웹페이지 (360 뷰어 포함)
+runs/          작업 기록 (자동 생성)
+```

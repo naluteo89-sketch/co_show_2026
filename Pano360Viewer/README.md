@@ -51,12 +51,19 @@ adb push 내사진.jpg /sdcard/Android/data/com.witches.pano360/files/Photos/
 | 이전 사진 | B / Y, 왼쪽 트리거, 스틱 ← | 왼손 핀치 | ← |
 | 정면 맞추기 | 스틱 누르기 | 양손 동시 핀치 | R |
 | 둘러보기 | 머리 회전 | 머리 회전 | 마우스 오른쪽 드래그 |
+| **홈으로(취소)** | 아래쪽 HOME 버튼에 레이 맞추고 트리거 · 왼쪽 ≡ 메뉴 버튼 | HOME 버튼을 바라보며 핀치 | Esc / H |
+| 홈에서 시작 | 트리거 / A / X | 핀치 | → / Space |
+
+- 앱은 **홈 화면**(검은 배경 + 사진 수 안내)에서 시작해요. 시작하면 첫 사진 정면이 지금 보는 방향에 맞춰져요.
+- 사진을 보는 동안 시선 아래(약 32°)에 **HOME** 버튼이 떠 있고, 고개를 크게 돌리면 따라와요.
+- 사진을 불러오는 중에 취소하면 로딩이 끝나는 즉시 홈으로 가요.
+- `PanoViewer` 옵션: `startAtHome`(끄면 바로 첫 사진), `showHomeButton`. `PanoHomeButton.dwellToActivate`를 켜면 버튼을 2초 바라보기만 해도 홈으로 가요(전시 중 오작동 방지로 기본 꺼짐).
 
 ## 구조
 
 ```
 Assets/Pano360/
-  Runtime/   PanoViewer(본체) · PanoInput(입력) · HeadTracker(HMD 회전) · PhotoSource(사진 목록) · PanoLabel(안내 텍스트)
+  Runtime/   PanoViewer(본체·홈 화면) · PanoInput(입력) · HeadTracker(HMD 회전) · PhotoSource(사진 목록) · PanoLabel(안내 텍스트) · PanoHomeButton(HOME 취소 버튼)
   Resources/ Pano360Equirect.shader  — 시선 방향으로 UV를 계산하는 360 셰이더 (이음새·극점 왜곡 없음)
   Editor/    Pano360Setup(자동 설정·메뉴) · PhotoListBuilder · QuestManifestPatcher(핸드트래킹 권한)
   Editor/XR/ Pano360XRConfig — OpenXR 설치 후에만 컴파일되는 XR 자동 설정

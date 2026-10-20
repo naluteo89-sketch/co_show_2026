@@ -12,3 +12,9 @@
 *.aab
 .vs/
 .idea/
+
+# Android native build cache (Unity 6)
+/.utmp/
+# Unity crash-recovery scene backups
+/[Aa]ssets/_Recovery/
+/[Aa]ssets/_Recovery.meta
