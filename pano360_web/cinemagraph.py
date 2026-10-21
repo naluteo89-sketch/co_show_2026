@@ -226,8 +226,9 @@ class RegionProjector:
         self.iy, self.ix = np.nonzero(inside)
         px = ((u[inside] + 1) / 2 * w - 0.5).clip(0, w - 1.001)
         py = ((1 - v[inside]) / 2 * h - 0.5).clip(0, h - 1.001)
-        self.x0, self.y0 = np.floor(px).astype(np.int64), np.floor(py).astype(np.int64)
-        self.fx, self.fy = (px - self.x0)[:, None], (py - self.y0)[:, None]
+        self.x0, self.y0 = np.floor(px).astype(np.int32), np.floor(py).astype(np.int32)
+        self.fx, self.fy = (px - self.x0).astype(np.float32)[:, None], (py - self.y0).astype(np.float32)[:, None]
+        self.iy, self.ix = self.iy.astype(np.int32), self.ix.astype(np.int32)
         a = self.sample(mask[..., None])[:, 0]
         keep = a > 0.002
         for k in ("iy", "ix", "x0", "y0", "fx", "fy"):
@@ -256,8 +257,30 @@ def ffmpeg_exe() -> str:
         raise RuntimeError("ffmpeg 를 찾지 못했어요. `pip install imageio-ffmpeg` 를 하거나 ffmpeg 를 PATH 에 넣어 주세요.")
 
 
+_ENC_CACHE = {}
+
+
+def encoder_args(codec="hevc", crf=17, fps=24) -> list:
+    """Quest 3 용 인코딩 인자. hevc(H.265): 고해상도에서 H.264 보다 안정·고화질 (Quest 3 에서 5.7K~8K H.264 는
+    멈춤 보고 있음). libx265 가 없으면 H.264 로."""
+    exe = ffmpeg_exe()
+    if exe not in _ENC_CACHE:
+        try:
+            out = subprocess.run([exe, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=20).stdout
+        except Exception:
+            out = ""
+        _ENC_CACHE[exe] = out
+    have265 = "libx265" in _ENC_CACHE[exe]
+    gop = str(int(round(fps * 2)))
+    if codec == "hevc" and have265:
+        return ["-c:v", "libx265", "-preset", "medium", "-crf", str(crf), "-tag:v", "hvc1", "-pix_fmt", "yuv420p",
+                "-g", gop,
+                "-x265-params", "log-level=error:rc-lookahead=8:frame-threads=1:lookahead-slices=0"]   # 8K 에서 메모리 아낌
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p", "-g", gop]
+
+
 def compose_video(still_path: str, regions: list, out_mp4: str, *, fps=24, width=4096, crf=18,
-                  preview_png: str | None = None, warp=None) -> dict:
+                  preview_png: str | None = None, warp=None, codec="hevc") -> dict:
     """regions: [{region(yaw,pitch,hfov), size(w,h), still(crop PNG 경로), frames(np), mask(np)}] → 360 MP4.
     warp: influence.FlowWarp — 있으면 바탕이 '영향받는 것만 살짝 움직이는' 원본, 없으면 완전 정지 원본."""
     W, H = int(width), int(width) // 2
@@ -268,8 +291,7 @@ def compose_video(still_path: str, regions: list, out_mp4: str, *, fps=24, width
     T = min([len(r["frames"]) for r in regions] + ([warp.T] if warp is not None else []))
     projs = [RegionProjector(r["region"], r["size"], r["mask"], W, H) for r in regions]
     cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-           "-r", str(fps), "-i", "-", "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_mp4]
+           "-r", str(fps), "-i", "-", *encoder_args(codec, crf, fps), "-movflags", "+faststart", out_mp4]
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for t in range(T):

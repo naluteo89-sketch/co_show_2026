@@ -32,6 +32,16 @@ namespace Pano360
         [Tooltip("360 영상 소리 재생")]
         public bool videoAudio = true;
 
+        [Header("사건 영상 (사진 → 영상 → 사진)")]
+        [Tooltip("사진을 띄운 뒤 사건 영상을 시작하기까지 (초)")]
+        public float eventDelay = 4f;
+        [Tooltip("사진 ↔ 영상 전환 시간 (초)")]
+        public float eventCrossfade = 0.6f;
+        [Tooltip("사건이 끝난 뒤 같은 사진에서 다시 재생 (끄면 한 번만)")]
+        public bool eventRepeat = true;
+        [Tooltip("다시 재생하기까지 사진만 보여 주는 시간 (초)")]
+        public float eventInterval = 8f;
+
         Camera cam;
         Transform head;
         Transform sphere;
@@ -53,10 +63,14 @@ namespace Pano360
         bool HasContent => current != null || videoRT != null;
         bool busy;
         float fade = 1f;
+        Coroutine eventCo;               // 사진 위 사건 영상 반복
+        bool eventPlaying;
 
         static readonly int MainTexId = Shader.PropertyToID("_MainTex");
         static readonly int StereoId = Shader.PropertyToID("_Stereo");
         static readonly int FadeId = Shader.PropertyToID("_Fade");
+        static readonly int BlendTexId = Shader.PropertyToID("_BlendTex");
+        static readonly int BlendId = Shader.PropertyToID("_Blend");
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void AutoCreate()
@@ -168,6 +182,7 @@ namespace Pano360
         IEnumerator GoHome()
         {
             busy = true;
+            StopEvent();
             homeButton.SetVisible(false);
             yield return FadeTo(1f);
             mat.SetTexture(MainTexId, null);
@@ -232,6 +247,7 @@ namespace Pano360
         IEnumerator ShowPhoto(int i)
         {
             busy = true;
+            StopEvent();
             yield return FadeTo(1f);
 
             var p = photos[i];
@@ -263,7 +279,7 @@ namespace Pano360
                     string warn = Mathf.Abs(ratio - want) > 0.03f
                         ? $"\n\nWARNING: {tex.width}x{tex.height} is not {(p.stereo ? "1:1" : "2:1")} - image will look stretched"
                         : "";
-                    label.Show($"{i + 1} / {photos.Count}\n{p.name}{(p.stereo ? "  [3D]" : "")}\n{tex.width}x{tex.height}{warn}",
+                    label.Show($"{i + 1} / {photos.Count}{(p.HasEvent ? "  [EVENT]" : "")}\n{p.name}{(p.stereo ? "  [3D]" : "")}\n{tex.width}x{tex.height}{warn}",
                                warn.Length > 0 ? labelDuration * 2f : labelDuration);
                 }
                 else
@@ -283,6 +299,83 @@ namespace Pano360
             if (HasContent) yield return FadeTo(0f);
             if (showHomeButton && mode == Mode.Viewing) homeButton.SetVisible(true);
             busy = false;
+            if (!p.video && p.HasEvent && current != null) eventCo = StartCoroutine(EventCycle(p));
+        }
+
+        // ------------------------------------------------------------------ 사건 영상: 원본 사진 → 영상 → 원본 사진
+        // 평소엔 고화질(8K) 사진. 사건 영상(4K)은 처음·끝이 원본과 같으므로 부드럽게 바꿨다가 끝나면 다시 사진으로.
+        IEnumerator EventCycle(PhotoEntry p)
+        {
+            float wait = eventDelay;
+            while (true)
+            {
+                // 기다리는 동안 미리 준비 (시작할 때 끊김 없도록)
+                videoPlayer.url = p.eventUrl;
+                videoPlayer.isLooping = false;
+                videoPlayer.Prepare();
+                float t0 = Time.realtimeSinceStartup;
+                yield return new WaitForSeconds(wait);
+                while (!videoPlayer.isPrepared && Time.realtimeSinceStartup - t0 < 20f) yield return null;
+                if (!videoPlayer.isPrepared)
+                {
+                    Debug.LogError($"[Pano360] 사건 영상 준비 실패 {p.eventUrl}");
+                    label.Show("Failed to load event video", labelDuration);
+                    yield break;
+                }
+
+                int w = (int)videoPlayer.width, h = (int)videoPlayer.height;
+                if (videoRT == null || videoRT.width != w || videoRT.height != h)
+                {
+                    ReleaseVideoRT();
+                    videoRT = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32)
+                    {
+                        name = "Pano360 Event", useMipMap = false, autoGenerateMips = false,
+                        wrapModeU = TextureWrapMode.Repeat, wrapModeV = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear
+                    };
+                    videoRT.Create();
+                }
+                videoPlayer.targetTexture = videoRT;
+                mat.SetTexture(BlendTexId, videoRT);
+                eventPlaying = true;
+                videoPlayer.Play();
+                // 첫 프레임이 그려질 때까지 기다린 뒤 사진 → 영상
+                float tw = Time.realtimeSinceStartup;
+                while (videoPlayer.frame < 1 && Time.realtimeSinceStartup - tw < 3f) yield return null;
+                yield return BlendTo(1f);
+
+                // 끝나기 직전에 영상 → 사진
+                double len = videoPlayer.length;
+                while (videoPlayer.isPlaying && videoPlayer.time < len - eventCrossfade) yield return null;
+                yield return BlendTo(0f);
+                videoPlayer.Stop();
+                eventPlaying = false;
+
+                if (!eventRepeat) yield break;
+                wait = eventInterval;
+            }
+        }
+
+        IEnumerator BlendTo(float target)
+        {
+            float b = mat.GetFloat(BlendId);
+            while (!Mathf.Approximately(b, target))
+            {
+                b = Mathf.MoveTowards(b, target, Time.deltaTime / Mathf.Max(0.01f, eventCrossfade));
+                mat.SetFloat(BlendId, b);
+                yield return null;
+            }
+        }
+
+        void StopEvent()
+        {
+            if (eventCo != null) { StopCoroutine(eventCo); eventCo = null; }
+            if (mat != null) { mat.SetFloat(BlendId, 0f); mat.SetTexture(BlendTexId, null); }
+            // 사진 위 사건 영상이면 멈춤 (일반 360 영상을 보는 중이면 그대로 둠 — 다음 항목에서 처리)
+            if (videoRT == null || mat == null || mat.GetTexture(MainTexId) != videoRT)
+            {
+                eventPlaying = false;
+                StopVideo();
+            }
         }
 
         IEnumerator FadeTo(float target)
@@ -349,9 +442,15 @@ namespace Pano360
                 videoPlayer.Stop();
                 videoPlayer.targetTexture = null;
             }
+            ReleaseVideoRT();
+        }
+
+        void ReleaseVideoRT()
+        {
             if (videoRT != null)
             {
                 if (mat != null && mat.GetTexture(MainTexId) == videoRT) mat.SetTexture(MainTexId, null);
+                if (mat != null && mat.GetTexture(BlendTexId) == videoRT) { mat.SetTexture(BlendTexId, null); mat.SetFloat(BlendId, 0f); }
                 videoRT.Release();
                 Destroy(videoRT);
                 videoRT = null;
@@ -361,7 +460,7 @@ namespace Pano360
         void OnApplicationPause(bool paused)
         {
             // 헤드셋을 벗으면 영상도 멈췄다가 다시 쓰면 이어서 재생
-            if (videoPlayer == null || videoRT == null) return;
+            if (videoPlayer == null || videoRT == null || (!eventPlaying && mat.GetTexture(MainTexId) != videoRT)) return;
             if (paused) videoPlayer.Pause(); else videoPlayer.Play();
         }
 

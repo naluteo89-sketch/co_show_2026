@@ -207,6 +207,35 @@ class StudioTests(unittest.IsolatedAsyncioTestCase):
 
 class MotionTests(unittest.TestCase):
     """영상화: 일부만 움직이는 영역 · 프롬프트."""
+    def test_photo_paste_keeps_detail_when_photo_is_small(self):
+        import erp
+        self.assertEqual(erp.photo_paste_mode(8192, 1200, 72)[0], "detail")      # 1°당 16.7px < 22.8px
+        self.assertEqual(erp.photo_paste_mode(8192, 4000, 72)[0], "original")
+        rng = np.random.default_rng(0)
+        fin = Image.fromarray((rng.random((256, 512, 3)) * 255).astype(np.uint8))
+        photo = Image.new("RGB", (60, 40), (200, 100, 50))
+        out = np.asarray(erp.paste_photo(fin, photo, 0, 0, 60, mode="detail"), np.float32)
+        f = np.asarray(fin, np.float32)
+        self.assertTrue(np.array_equal(out[:, :100], f[:, :100]))            # 사진 밖은 그대로
+        c = out[118:138, 246:266]
+        self.assertLess(abs(c[..., 0].mean() - 200), 25)                     # 사진 자리 색은 원본 사진
+        self.assertGreater(c.std(), 5)                                        # 결과의 디테일은 남음
+
+    def test_effect_layers_matte_and_blend(self):
+        import layers
+        self.assertEqual(layers.default_layer({"size": [2048, 1024]}, None, None)["kind"], "erp")
+        el = layers.default_layer({"size": [1280, 704]}, "spray", {"view": "x", "yaw": 10, "pitch": 0, "hfov": 120})
+        self.assertEqual((el["kind"], el["blend"], el["yaw"]), ("element", "screen", 10))
+        self.assertEqual(layers.clamp_layer({"opacity": 3, "blend": "x", "kind": "element"})["opacity"], 1.0)
+        fr = np.zeros((3, 72, 128, 3), np.uint8)
+        fr[1, 20:50, 40:90] = 240                                       # 검은 배경 위 밝은 효과
+        a = layers.luma_alpha(fr)
+        self.assertEqual(float(a[0].max()), 0.0)                         # 검정 = 투명
+        self.assertGreater(float(a[1, 35, 64]), 0.8)
+        cur = np.full((1, 3), 100.0, np.float32); src = np.full((1, 3), 200.0, np.float32)
+        self.assertEqual(int(layers._blend(cur, src, np.ones((1, 1), np.float32), "normal")[0, 0]), 200)
+        self.assertGreater(int(layers._blend(cur, src, np.ones((1, 1), np.float32), "screen")[0, 0]), 200)  # 밝게 더하기
+
     def test_event_workflows_prompt_and_alpha(self):
         import event, llm, workflow_ui
         e = llm.clamp_event({"yaw": 400, "pitch": 80, "hfov": 10, "calm_start": "calm", "event": "water surges",

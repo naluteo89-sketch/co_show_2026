@@ -72,38 +72,53 @@ def stabilize_u8(frames: np.ndarray, grid=12) -> tuple[np.ndarray, dict]:
                            "held_frames": held}
 
 
-def change_alpha(frames: np.ndarray, lo=10.0, hi=32.0, blur=3.0, grow=0.012, feather=0.02, t_spread=2) -> np.ndarray:
-    """프레임별 '첫 프레임(=원본)에서 달라진 정도' → 섞는 비율 (T,h,w) float32 0~1. 화면 테두리는 0."""
+def change_alpha(frames: np.ndarray, lo=10.0, hi=32.0, blur=3.0, grow=0.012, feather=0.02, t_spread=2,
+                 border="all", max_w=1024) -> np.ndarray:
+    """프레임별 '첫 프레임(=원본)에서 달라진 정도' → 섞는 비율 (T,h',w') float32 0~1 (메모리 아끼려고 최대 너비 max_w 로
+    계산 — 비율은 부드러워서 나중에 키워 써도 됨). 테두리(또는 ERP 면 극점)는 0."""
     import cv2
-    T, h, w = frames.shape[:3]
-    g0 = cv2.GaussianBlur(cv2.cvtColor(frames[0], cv2.COLOR_RGB2GRAY).astype(np.float32), (0, 0), blur)
+    T, H0, W0 = frames.shape[:3]
+    s = min(1.0, max_w / W0)
+    w, h = max(8, int(round(W0 * s))), max(8, int(round(H0 * s)))
+    sm = lambda f: cv2.resize(cv2.cvtColor(f, cv2.COLOR_RGB2GRAY), (w, h), interpolation=cv2.INTER_AREA).astype(np.float32)
+    bl = max(0.8, blur * s)
+    g0 = cv2.GaussianBlur(sm(frames[0]), (0, 0), bl)
     a = np.empty((T, h, w), np.float32)
     k = max(3, int(round(grow * max(w, h))) | 1)
     ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    fe = max(2.0, feather * max(w, h))
+    small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    fe = max(1.5, feather * max(w, h))
     for t in range(T):
-        g = cv2.GaussianBlur(cv2.cvtColor(frames[t], cv2.COLOR_RGB2GRAY).astype(np.float32), (0, 0), blur)
+        g = cv2.GaussianBlur(sm(frames[t]), (0, 0), bl)
         m = np.clip((np.abs(g - g0) - lo) / (hi - lo), 0, 1)
         m = cv2.dilate(cv2.morphologyEx(m, cv2.MORPH_OPEN, small), ker)
         a[t] = cv2.GaussianBlur(m, (0, 0), fe)
     if t_spread:                                              # 깜빡임 방지: 앞뒤 프레임 최댓값 → 이동 평균
-        p = np.pad(a, ((t_spread, t_spread), (0, 0), (0, 0)), mode="edge")
-        mx = p[0:T].copy()
-        for i in range(1, 2 * t_spread + 1):
-            np.maximum(mx, p[i:i + T], out=mx)
-        p = np.pad(mx, ((1, 1), (0, 0), (0, 0)), mode="edge")
-        a = (p[:-2] + p[1:-1] + p[2:]) / 3
-    return np.clip(a * cinemagraph.edge_falloff(w, h, 0.12)[None], 0, 1).astype(np.float32)
+        mx = a.copy()
+        for d in range(1, t_spread + 1):
+            np.maximum(mx[d:], a[:-d], out=mx[d:])
+            np.maximum(mx[:-d], a[d:], out=mx[:-d])
+        a[1:-1] = (mx[:-2] + mx[1:-1] + mx[2:]) / 3
+        a[0], a[-1] = mx[0], mx[-1]
+        del mx
+    if border == "poles":                                     # 360(ERP) 전체 영상: 좌우는 이어지므로 위·아래(극점)만 0
+        y = np.abs((np.arange(h) + 0.5) / h - 0.5) * 2
+        f = np.clip((0.94 - y) / 0.08, 0, 1)
+        edge = np.repeat((f * f * (3 - 2 * f))[:, None], w, 1)
+    else:
+        edge = cinemagraph.edge_falloff(w, h, 0.12)
+    a *= edge[None]
+    return np.clip(a, 0, 1, out=a)
 
 
 def compose_event(still_hi: np.ndarray, view: dict, frames: np.ndarray, crop: np.ndarray, out_mp4: str, *,
-                  fps: float, width=4096, crf=18, preview: str | None = None, alpha_png: str | None = None) -> dict:
+                  fps: float, width=7680, crf=17, codec="hevc", preview: str | None = None,
+                  alpha_png: str | None = None) -> dict:
     """view: {yaw, pitch, hfov}. frames: (T,h,w,3) uint8 생성 영상. crop: 원본 사건 화면 (아무 크기, RGB)."""
     import cv2
     W, H = int(width), int(width) // 2
     T, h, w = frames.shape[:3]
-    base = cv2.resize(still_hi, (W, H), interpolation=cv2.INTER_AREA).astype(np.float32)
+    base = cv2.resize(still_hi, (W, H), interpolation=cv2.INTER_AREA)
     frames, stab = stabilize_u8(frames)
     ref = cv2.resize(np.asarray(crop), (w, h), interpolation=cv2.INTER_AREA).astype(np.float32)
     off = (ref.reshape(-1, 3).mean(0) - frames[0].reshape(-1, 3).astype(np.float32).mean(0)).astype(np.float32)
@@ -111,30 +126,82 @@ def compose_event(still_hi: np.ndarray, view: dict, frames: np.ndarray, crop: np
     cover = alpha.reshape(T, -1).mean(1)
     peak = int(np.argmax(cover))
     pj = cinemagraph.RegionProjector(view, (w, h), np.ones((h, w), np.float32), W, H)
+    up = lambda x: cv2.resize(x, (w, h), interpolation=cv2.INTER_LINEAR)
     cmd = [cinemagraph.ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-           "-r", f"{fps:g}", "-i", "-", "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_mp4]
+           "-r", f"{fps:g}", "-i", "-", *cinemagraph.encoder_args(codec, crf, fps), "-movflags", "+faststart", out_mp4]
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    broken = False
     try:
         for t in range(T):
-            fr = base.copy()
-            a = pj.sample(alpha[t][..., None])
+            fr = base.copy()                                  # uint8 그대로 (8K 에서 메모리 아낌)
+            a = pj.sample(up(alpha[t])[..., None])
             if a.max() > 1e-3:
                 src = np.clip(frames[t].astype(np.float32) + off, 0, 255)
-                fr[pj.iy, pj.ix] = fr[pj.iy, pj.ix] * (1 - a) + pj.sample(src) * a
-            b = np.clip(np.rint(fr), 0, 255).astype(np.uint8)
+                cur = fr[pj.iy, pj.ix].astype(np.float32)
+                fr[pj.iy, pj.ix] = np.clip(np.rint(cur * (1 - a) + pj.sample(src) * a), 0, 255).astype(np.uint8)
             if preview and t == peak:
-                Image.fromarray(b).save(preview, quality=90)
-            p.stdin.write(b.tobytes())
+                Image.fromarray(fr).save(preview, quality=90)
+            p.stdin.write(fr.tobytes())
         p.stdin.close()
-        err = p.stderr.read().decode("utf-8", "replace")
-        if p.wait() != 0:
-            raise RuntimeError(f"ffmpeg 실패: {err[-800:]}")
-    finally:
-        if p.poll() is None:
-            p.kill()
+    except BrokenPipeError:
+        broken = True
+    err = p.stderr.read().decode("utf-8", "replace")
+    rc = p.wait()
+    if rc != 0 or broken:
+        raise RuntimeError(f"ffmpeg 실패 (코드 {rc}; 메모리 부족이면 config motion.event_width 를 5760 으로): {err[-800:]}")
     if alpha_png:
         Image.fromarray((alpha[peak] * 255).astype(np.uint8)).save(alpha_png)
     return {"frames": int(T), "fps": round(fps, 2), "seconds": round(T / fps, 2), "size": [W, H],
             "peak_frame": peak, "peak_cover": round(float(cover[peak]), 3), "start_cover": round(float(cover[0]), 3),
             "end_cover": round(float(cover[-1]), 3), **stab}
+
+
+def is_erp(frames: np.ndarray) -> bool:
+    h, w = frames.shape[1:3]
+    return abs(w / h - 2.0) < 0.05
+
+
+def compose_event_erp(still_hi: np.ndarray, frames: np.ndarray, out_mp4: str, *, fps: float, width=5760, crf=17,
+                      codec="hevc", preview: str | None = None, alpha_png: str | None = None) -> dict:
+    """360 전체(ERP) 로 만든 영상(예: LTX + 360 LoRA 2K) → 원본에서 달라진 곳만 8K 원본 위에.
+    정지한 곳은 8K 원본 그대로라 영상 해상도(2K)와 상관없이 선명함."""
+    import cv2
+    W, H = int(width), int(width) // 2
+    T, h, w = frames.shape[:3]
+    base = cv2.resize(still_hi, (W, H), interpolation=cv2.INTER_AREA)
+    ref = cv2.resize(still_hi, (w, h), interpolation=cv2.INTER_AREA).astype(np.float32)
+    off = (ref.reshape(-1, 3).mean(0) - frames[0].reshape(-1, 3).astype(np.float32).mean(0)).astype(np.float32)
+    alpha = change_alpha(frames, border="poles")
+    cover = alpha.reshape(T, -1).mean(1)
+    peak = int(np.argmax(cover))
+    cmd = [cinemagraph.ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+           "-r", f"{fps:g}", "-i", "-", *cinemagraph.encoder_args(codec, crf, fps), "-movflags", "+faststart", out_mp4]
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    broken = False
+    try:
+        for t in range(T):
+            fr = base.copy()
+            if alpha[t].max() > 1e-3:
+                a = cv2.resize(alpha[t], (W, H), interpolation=cv2.INTER_LINEAR)
+                rows = np.nonzero(a.max(1) > 1e-3)[0]
+                r0, r1 = rows[0], rows[-1] + 1                # 바뀐 줄만 계산
+                src = cv2.resize(np.clip(frames[t].astype(np.float32) + off, 0, 255), (W, H),
+                                 interpolation=cv2.INTER_CUBIC)[r0:r1]
+                aa = a[r0:r1, :, None]
+                fr[r0:r1] = np.clip(np.rint(fr[r0:r1].astype(np.float32) * (1 - aa) + src * aa), 0, 255).astype(np.uint8)
+            if preview and t == peak:
+                Image.fromarray(fr).save(preview, quality=90)
+            p.stdin.write(fr.tobytes())
+        p.stdin.close()
+    except BrokenPipeError:
+        broken = True
+    err = p.stderr.read().decode("utf-8", "replace")
+    rc = p.wait()
+    if rc != 0 or broken:
+        raise RuntimeError(f"ffmpeg 실패 (코드 {rc}; 메모리 부족이면 config motion.event_width 를 4096 으로): {err[-800:]}")
+    if alpha_png:
+        Image.fromarray((alpha[peak] * 255).astype(np.uint8)).save(alpha_png)
+    return {"mode": "erp", "frames": int(T), "fps": round(fps, 2), "seconds": round(T / fps, 2), "size": [W, H],
+            "gen_size": [int(w), int(h)], "peak_frame": peak, "peak_cover": round(float(cover[peak]), 3),
+            "start_cover": round(float(cover[0]), 3), "end_cover": round(float(cover[-1]), 3)}
+

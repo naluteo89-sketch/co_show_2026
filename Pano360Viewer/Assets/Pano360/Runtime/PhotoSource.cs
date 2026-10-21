@@ -13,6 +13,8 @@ namespace Pano360
         public string url;
         public bool stereo; // Top-Bottom 스테레오 여부
         public bool video;  // 360 영상 (mp4 등) — VideoPlayer 로 재생
+        public string eventUrl; // 사건 영상: 이 사진을 보다가 재생 → 끝나면 다시 사진 (이름_event.mp4)
+        public bool HasEvent => !string.IsNullOrEmpty(eventUrl);
     }
 
     [Serializable]
@@ -111,7 +113,30 @@ namespace Pano360
             local.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
             result.AddRange(local);
 
+            PairEvents(result);
             Debug.Log($"[Pano360] 사진·영상 {result.Count}개 (포함 {bundled.Count}, 기기 {local.Count}) / 기기 폴더: {DeviceFolder}");
+        }
+
+        public const string EventSuffix = "_event";
+
+        /// "XXX_event.mp4" 를 이름이 XXX 로 시작하는 사진에 붙임 (사진 → 사건 영상 → 사진). 짝이 없으면 일반 영상으로 둠
+        public static void PairEvents(List<PhotoEntry> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var v = list[i];
+                if (!v.video) continue;
+                var stem = Path.GetFileNameWithoutExtension(v.name);
+                if (!stem.EndsWith(EventSuffix, StringComparison.OrdinalIgnoreCase)) continue;
+                var baseName = stem.Substring(0, stem.Length - EventSuffix.Length);
+                int img = list.FindIndex(p => !p.video && !p.HasEvent &&
+                                              Path.GetFileNameWithoutExtension(p.name).StartsWith(baseName, StringComparison.OrdinalIgnoreCase));
+                if (img < 0) continue;
+                var e = list[img];
+                e.eventUrl = v.url;
+                list[img] = e;
+                list.RemoveAt(i);
+            }
         }
 
         static void AddFromDirectory(string dir, List<PhotoEntry> into)

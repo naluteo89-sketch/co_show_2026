@@ -8,7 +8,7 @@ yaw: +오른쪽, pitch: +위, hfov: 가로 화각, vfov: 비우면 사진 비율
 import math
 
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 
 GREEN = np.array([0, 255, 0], np.float32)
 
@@ -333,9 +333,45 @@ def keep_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, feather=0
     return Image.fromarray(((1.0 - w) * 255).astype(np.uint8), "L").convert("RGB")
 
 
-def paste_photo(final_img: Image.Image, photo: Image.Image, yaw, pitch, hfov, vfov=None, feather=0.05) -> Image.Image:
-    """최종 결과에 원본 사진을 원래 해상도로 다시 붙임 (가장자리는 부드럽게)."""
-    return photo_composite(final_img, photo, yaw, pitch, hfov, vfov, feather=feather, color_strength=0.0)
+def _gauss(a: np.ndarray, sigma: float) -> np.ndarray:
+    try:
+        import cv2
+        return cv2.GaussianBlur(a, (0, 0), sigma)
+    except Exception:
+        return np.asarray(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(sigma)),
+                          np.float32)
+
+
+def photo_paste_mode(final_w: int, photo_w: int, hfov: float, mode="auto") -> tuple[str, float]:
+    """원본 사진이 최종 해상도보다 흐리면 'detail'(원본 색·형태 + 결과의 선명한 디테일), 충분히 선명하면 'original'."""
+    final_ppd = final_w / 360.0
+    photo_ppd = photo_w / max(1e-3, float(hfov))
+    if mode in ("original", "detail"):
+        return mode, final_ppd / photo_ppd
+    return ("original" if photo_ppd >= 0.95 * final_ppd else "detail"), final_ppd / photo_ppd
+
+
+def paste_photo(final_img: Image.Image, photo: Image.Image, yaw, pitch, hfov, vfov=None, feather=0.05,
+                mode="auto", detail=0.9) -> Image.Image:
+    """최종 결과에 원본 사진을 다시 붙임 (사진에 있던 건 절대 안 사라짐).
+
+    original: 원본 사진 픽셀 그대로 (사진이 최종 해상도만큼 선명할 때)
+    detail:   원본 사진이 작아 늘리면 흐려질 때 — 저주파(색·형태)는 원본, 고주파(선명한 디테일)는 8K 업스케일 결과.
+              결과의 사진 영역은 원래 사진에서 업스케일된 것이라 위치가 맞음. 사진 밖은 결과 그대로."""
+    pasted = photo_composite(final_img, photo, yaw, pitch, hfov, vfov, feather=feather, color_strength=0.0)
+    m, scale = photo_paste_mode(final_img.width, photo.width, hfov, mode)
+    if m == "original":
+        return pasted
+    sigma = max(0.8, 0.7 * scale)                      # 원본 사진에 없는 세밀함 = 이 반경보다 작은 것
+    F = np.asarray(final_img.convert("RGB"), np.float32)
+    P = np.asarray(pasted, np.float32)
+    gF = _gauss(F, sigma)
+    out = F + (_gauss(P, sigma) - gF)
+    if detail != 1.0:                                  # 사진 영역의 AI 디테일 세기 (지어낸 결이 과하면 낮춤)
+        wp = 1.0 - np.asarray(keep_mask(photo.size, yaw, pitch, hfov, vfov, feather=feather).convert("L")
+                              .resize(final_img.size, Image.BILINEAR), np.float32)[..., None] / 255.0
+        out += wp * (float(detail) - 1.0) * (F - gF)
+    return Image.fromarray(np.clip(np.rint(out), 0, 255).astype(np.uint8), "RGB")
 
 
 # ----------------------------------------------------------------------------- 영상화: 움직일 영역

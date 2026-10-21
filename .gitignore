@@ -1,0 +1,56 @@
+# ===== OS / 에디터 =====
+Thumbs.db
+desktop.ini
+.DS_Store
+.vs/
+.idea/
+.vscode/
+*.swp
+
+# ===== 비밀키 / 환경파일 =====
+.env
+.env.*
+*.key
+*.pem
+*.keystore
+*.jks
+
+# ===== Unity (Pano360Viewer) =====
+Pano360Viewer/[Ll]ibrary/
+Pano360Viewer/[Tt]emp/
+Pano360Viewer/[Oo]bj/
+Pano360Viewer/[Bb]uild/
+Pano360Viewer/[Bb]uilds/
+Pano360Viewer/[Ll]ogs/
+Pano360Viewer/[Uu]ser[Ss]ettings/
+Pano360Viewer/[Mm]emoryCaptures/
+Pano360Viewer/.utmp/
+# Windows 빌드 출력 폴더 (exe/dll ~96MB)
+Pano360Viewer/t/
+Pano360Viewer/*_BurstDebugInformation_DoNotShip/
+Pano360Viewer/[Aa]ssets/_Recovery/
+Pano360Viewer/[Aa]ssets/_Recovery.meta
+*.csproj
+*.sln
+*.apk
+*.aab
+*.unitypackage
+
+# ===== 대용량 미디어 (영상은 깃에 올리지 않음) =====
+*.mp4
+*.mp4.meta
+*.mov
+*.mov.meta
+*.webm
+*.webm.meta
+
+# ===== Python (pano360_web) =====
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+pano360_web/runs/
+
+# ===== 로그 =====
+*.log

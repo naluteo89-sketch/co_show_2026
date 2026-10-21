@@ -223,7 +223,7 @@ function showResult(att) {
   });
   if (f) viewer.load(f.jpg || f.url);
   motion.show(run.run_id, att, cfg);       // 5. 영상화 프롬프트 (이 결과 기준)
-  eventUI.show(run.run_id, att);           // 6. 사건 영상 (한 번 일어나는 연출)
+  eventUI.show(run.run_id, att, cfg);           // 6. 사건 영상 (한 번 일어나는 연출)
 }
 
 async function loadAttempts() {

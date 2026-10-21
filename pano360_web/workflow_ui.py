@@ -58,7 +58,7 @@ def wan_event_workflow(positive: str, negative: str, image: str = "event_view.pn
     g.node(7, "CLIPTextEncode", (380, 270), [("clip", "CLIP")], [("CONDITIONING", "CONDITIONING")], [negative], (520, 140),
            "Negative", "#322")
     g.node(20, "Note", (380, 440), [], [], [NOTE], (520, 200), "메모")
-    if variant == "wan5":
+    if variant in ("wan5", "wan5_t2v"):
         fps = 24
         L = int(round(seconds * fps)) // 4 * 4 + 1
         g.node(2, "UNETLoader", (0, 530), [], [("MODEL", "MODEL")], ["wan2.2_ti2v_5B_fp16.safetensors", "default"],
@@ -110,4 +110,14 @@ def wan_event_workflow(positive: str, negative: str, image: str = "event_view.pn
     g.node(17, "SaveVideo", (1640, 210), [("video", "VIDEO")], [], ["video/pano360_event", "auto", "auto"], (420, 400),
            "⑤ 저장 → 웹앱에 올리기")
     g.link(last, 0, 10, 0); g.link(vae, 0, 10, 1); g.link(10, 0, 11, 0); g.link(11, 0, 17, 0)
+    if variant == "wan5_t2v":                                # 효과만 따로 (텍스트 → 영상, 검은 배경)
+        lk = next(l for l in g.links if l[1] == 1)
+        next(n for n in g.nodes if n["id"] == 8)["inputs"][1]["link"] = None
+        g.links.remove(lk)
+        g.nodes = [n for n in g.nodes if n["id"] != 1]
+        for n in g.nodes:
+            if n["id"] == 17:
+                n["widgets_values"][0] = "video/pano360_effect"
+            if n["id"] == 20:
+                n["widgets_values"] = ["효과 레이어 (텍스트 → 영상, 검은 배경).\n- 결과 MP4 를 웹앱 6단계 '효과 레이어 추가'에 같은 프리셋으로 올리면\n  검정은 투명, 밝은 물보라·안개만 360 위에 섞여요.\n- 화면 비율 16:9 그대로 두세요 (웹에서 위치·화각 조절)."]
     return g.done()

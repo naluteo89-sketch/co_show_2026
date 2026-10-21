@@ -8,6 +8,8 @@ Shader "Pano360/Equirect"
         _MainTex ("Equirect Texture", 2D) = "black" {}
         _Stereo ("Stereo Top/Bottom", Float) = 0
         _Fade ("Fade To Black", Range(0, 1)) = 0
+        _BlendTex ("Event Video Texture", 2D) = "black" {}
+        _Blend ("Blend To Event Video", Range(0, 1)) = 0
     }
     SubShader
     {
@@ -25,8 +27,10 @@ Shader "Pano360/Equirect"
             #include "UnityCG.cginc"
 
             sampler2D _MainTex;
+            sampler2D _BlendTex;   // 사건 영상 (원본 사진 → 영상 → 원본 사진 전환용)
             float _Stereo;
             float _Fade;
+            float _Blend;
 
             struct appdata
             {
@@ -71,6 +75,8 @@ Shader "Pano360/Equirect"
 
                 // 밉맵이 없으므로 LOD 0 고정 샘플링 (u 이음새에서의 미분 튐 방지)
                 fixed4 c = tex2Dlod(_MainTex, float4(u, v, 0, 0));
+                if (_Blend > 0.001)
+                    c = lerp(c, tex2Dlod(_BlendTex, float4(u, v, 0, 0)), _Blend);
                 c.rgb *= (1.0 - _Fade);
                 c.a = 1;
                 return c;

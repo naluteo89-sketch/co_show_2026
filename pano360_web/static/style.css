@@ -62,3 +62,9 @@
   .mcrop img{width:100%;border-radius:6px;border:1px solid var(--line)}
   .mrender{background:var(--panel2);border-radius:8px;padding:12px;margin-top:14px}
   .mvideo{width:100%;aspect-ratio:2/1;background:#000;border-radius:6px;border:1px solid var(--line)}
+  .elayer{display:grid;grid-template-columns:120px 1fr;gap:10px;background:var(--panel);border-radius:8px;padding:10px;margin-top:8px;border-left:4px solid var(--c,#888)}
+  .elayer img{width:120px;border-radius:4px}
+  .elayer .row{gap:6px}
+  .elayer input[type=number]{width:auto}
+  .elayer.off{opacity:.5}
+

@@ -203,13 +203,37 @@
           <div class="muted" id="emeta" style="font-size:12px;margin-top:6px"></div>
         </div>
       </div>
+    </div>
       <div class="mrender">
-        <b>생성 영상 올리기 → 360 에 합치기</b>
-        <div class="muted" style="font-size:12px;margin-top:4px">ComfyUI 에서 사건 화면 PNG 와 워크플로로 만든 MP4 를 올려 주세요.</div>
+        <b>효과 레이어 → 360 에 섞기</b>
+        <div class="muted" style="font-size:12px;margin-top:4px">바탕은 <b>원본 360</b>(다시 그리지 않음). 효과 영상을 올려 고르고 섞어요.
+          <b>360 전체(2:1) 영상</b>·<b>사건 화면 영상</b>은 원본에서 달라진 곳만, <b>효과만 따로 만든 영상</b>(검은 배경 물보라·안개)은 밝은 곳만 섞여요.</div>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <div style="flex:0 0 260px"><label>효과 프리셋 (효과만 따로 만들 때)</label><select id="epreset"></select></div>
+          <div style="flex:0 0 auto;align-self:flex-end"><button id="epcopy">프롬프트 복사</button></div>
+          <div style="flex:0 0 auto;align-self:flex-end"><a id="epwf" download><button>ComfyUI 워크플로 (Wan 5B · 텍스트→영상)</button></a></div>
+        </div>
+        <div class="muted" id="epinfo" style="font-size:12px;margin-top:4px"></div>
         <div class="row" style="margin-top:10px;align-items:center">
           <div style="flex:1 1 260px"><input id="efile" type="file" accept="video/mp4,video/*"></div>
-          <div style="flex:0 0 auto"><button class="primary" id="ecompose">360 에 합치기</button></div>
+          <div style="flex:0 0 auto"><button class="primary" id="eadd">레이어 추가</button></div>
           <div style="flex:1 1 200px" id="ecstate" class="muted"></div>
+        </div>
+        <div id="elist"></div>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <div style="flex:0 0 auto"><button id="elsave">레이어 저장</button></div>
+          <div style="flex:0 0 auto"><button class="primary" id="eprev">매트 확인</button></div>
+          <div style="flex:0 0 auto"><button class="primary" id="ecompose">360 에 합치기 (4K)</button></div>
+        </div>
+        <div id="epreview" class="hidden" style="margin-top:10px">
+          <div class="row" style="align-items:center">
+            <div style="flex:1 1 300px"><input id="eslider" type="range" min="0" max="7" value="0" style="width:100%"></div>
+            <div style="flex:0 0 auto" id="etime" class="muted"></div>
+            <div style="flex:0 0 auto"><label style="display:inline"><input type="checkbox" id="ematteon" checked> 매트 보기</label></div>
+          </div>
+          <img id="ecomp" class="moverlay" alt="합성 미리보기">
+          <img id="ematte" class="moverlay" alt="매트 (레이어별 섞이는 곳)">
+          <div id="elegend" class="muted" style="font-size:12px;margin-top:6px"></div>
         </div>
         <div id="eout" class="hidden" style="margin-top:10px">
           <video id="evideo" controls muted playsinline class="mvideo"></video>
@@ -220,7 +244,6 @@
           </div>
         </div>
       </div>
-    </div>
   </section>
 </main>
 
