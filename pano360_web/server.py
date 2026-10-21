@@ -20,11 +20,6 @@ from PIL import Image
 import comfy
 from openai_client import OpenAIClient
 from storage import RunStore, InvalidRunPath
-import cinemagraph
-import event as eventmod
-import layers as layermod
-import workflow_ui
-import influence
 import erp
 import llm
 import workflow
@@ -65,15 +60,70 @@ class Studio:
         self.openai = OpenAIClient(self.s, self.keys["openai"], self.cfg["openai_model"])
         self.backends = comfy.make_backends(self.s, self.cfg["backends"], self.keys, self.cfg.get("model_fallbacks"),
                                          self.cfg.get("distilled_profile"),
-                                         self.cfg.get("ultrasharp_blend"))
+                                         self.cfg.get("ultrasharp_blend"), self.cfg.get("model_sources"))
 
     async def cleanup(self, app):
         await asyncio.gather(*(b.close() for b in self.backends.values()))
         if self.s is not None:
             await self.s.close()
 
+
+    def _source_png(self, run_id) -> bytes:
+        b = io.BytesIO()
+        self.source(run_id).convert("RGB").save(b, "PNG")
+        return b.getvalue()
+
+    def _paste_photo_file(self, run_id, n, att, dst):
+        """dst(최종 360)에 원본 사진을 다시 붙임. AI 업스케일된 원본(photo_up.png)이 있으면 그걸로 → 원본 자리도 선명."""
+        kp = self.cfg.get("keep_photo", {})
+        pl = att.get("placement") or {}
+        up = self.store.path(run_id, f"a{n:02d}", "photo_up.png")
+        fin = Image.open(dst)
+        src = Image.open(up).convert("RGB") if os.path.isfile(up) else self.source(run_id)
+        mode, scale = erp.photo_paste_mode(fin.width, src.width, float(pl["hfov"]), kp.get("paste_mode", "auto"))
+        erp.paste_photo(fin, src, float(pl["yaw"]), float(pl["pitch"]), float(pl["hfov"]),
+                        float(pl["vfov"]) if pl.get("vfov") else None, kp.get("paste_feather", 0.05), mode=mode,
+                        detail=float(kp.get("detail_strength", 0.9))).save(dst)
+        return ("upscaled-" if os.path.isfile(up) else "") + mode, scale
+
     def source(self, run_id):
         return erp.load_upright(self.store.path(run_id, "source" + self.store.read(run_id)["source_ext"]))
+
+    def _default_backend(self):
+        """기본 실행 위치: config "default_backend" (지금은 Comfy Cloud) → 없으면 첫 번째."""
+        d = self.cfg.get("default_backend")
+        return d if d in self.backends else next(iter(self.backends), "")
+
+    async def models_check(self, req):
+        """이 실행 위치에 필요한 모델이 다 있는지 점검: 360 생성 · 8K 화질 개선 · 원본 사진 업스케일 · 360 영상 노드."""
+        bk = req.query.get("backend") or self._default_backend()
+        backend = self.backends.get(bk)
+        if backend is None:
+            return jresp({"error": f"'{bk}' 실행 위치를 사용할 수 없어요."}, 400)
+        graphs = []
+        try:
+            graphs.append(("360 이미지 생성 · 발밑·하늘 보정", workflow.ui_to_api(workflow.load_template(self.cfg["workflow"]))))
+        except Exception as e:
+            graphs.append(("360 이미지 생성", {"_err": str(e)}))
+        up = self.cfg["model_fallbacks"]["UpscaleModelLoader"][0]
+        graphs.append(("8K 화질 개선 · 원본 사진 업스케일", workflow.build_photo_upscale("check.png", up, "VR360/check")[0]))
+        vt = os.path.basename(self.cfg.get("video_template", ""))
+        try:
+            ui, _, _ = workflow.fill_video_node(self._video_template(), image="check.png", positive="x", negative="x",
+                                                mask_image="check.png", rect=(0, 0, 256, 256))
+            graphs.append((f"360 영상 ({vt})", workflow.video_node_api(ui)[0]))
+        except Exception as e:
+            graphs.append((f"360 영상 ({vt})", {"_err": str(e)}))
+        out = []
+        for title, g in graphs:
+            if "_err" in g:
+                out.append({"title": title, "error": g["_err"]})
+                continue
+            try:
+                out.append({"title": title, "items": await backend.check_models(g)})
+            except Exception as e:
+                out.append({"title": title, "error": f"서버 모델 목록을 못 읽었어요: {e}"})
+        return jresp({"backend": bk, "groups": out})
 
     # ------------------------------------------------------------------ API
     async def config(self, req):
@@ -88,15 +138,14 @@ class Studio:
                      "url": self.cfg["backends"][n]["url"], "ok": ok} for n, ok in zip(names, oks)]
         return jresp({
             "backends": backends,
+            "default_backend": self._default_backend(),
             "openai_ready": self.openai.ready,
             "openai_model": self.cfg["openai_model"],
             "openai_models": self.cfg.get("openai_models", [self.cfg["openai_model"]]),
             "default_yaw": self.cfg.get("default_yaw", -20),
             "workflow": os.path.basename(self.cfg["workflow"]),
             "gen_defaults": self.cfg.get("gen_defaults", {}),
-            "motion": {k: self.cfg.get("motion", {}).get(k) for k in ("backend", "duration", "fps", "show_render")},
-            "event_presets": [{k: p[k] for k in ("id", "name_ko", "blend", "prompt")} for p in layermod.PRESETS],
-            "event_neg": layermod.NEG_ELEMENT,
+            "ltx360": {"positive": self._ltx360_prompt({}), "negative": workflow.LTX360_NEG},
             "version": self.cfg.get("version", "?"),
         })
 
@@ -174,9 +223,40 @@ class Studio:
         return jresp({"url": f"/runs/{p['run_id']}/control.png?t={time.time():.0f}"})
 
     @serialized_run
+    async def import_result(self, req):
+        """생성 없이: 올린 360(2:1) 이미지를 그대로 결과로 등록 → 5·6단계(마스크·프롬프트·영상) 바로 사용."""
+        run_id = req.match_info["run_id"]
+        meta = self.store.read(run_id)
+        ratio = meta["width"] / max(1, meta["height"])
+        if abs(ratio - 2.0) > 0.05:
+            return jresp({"error": f"360(가로:세로 2:1) 이미지만 바로 쓸 수 있어요. 지금 {meta['width']}×{meta['height']}"}, 400)
+        n = len(meta["attempts"]) + 1
+        d = f"a{n:02d}"
+        os.makedirs(self.store.path(run_id, d), exist_ok=True)
+        name = f"{d}/{run_id}_{d}_360.jpg"
+
+        def save():
+            im = self.source(run_id).convert("RGB")
+            if im.width != 2 * im.height:
+                im = im.resize((im.width, im.width // 2), Image.LANCZOS)
+            im.save(self.store.path(run_id, *name.split("/")), "JPEG", quality=int(self.cfg.get("jpg_quality", 95)),
+                    subsampling=0)                      # optimize 는 큰 이미지에서 libjpeg 버퍼 오류가 날 수 있어 끔
+            return im.size
+        size = await asyncio.to_thread(save)
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        att = {"n": n, "backend": "-", "mode": "import", "state": "done", "prompt_id": None, "out_nodes": {},
+               "placement": {}, "prompts": {}, "settings": {}, "seeds": {},
+               "files": [{"tag": "import", "url": f"/runs/{run_id}/{name}", "jpg": f"/runs/{run_id}/{name}", "final": True}],
+               "size": list(size), "created": now, "finished": now}
+        meta["attempts"].append(att)
+        self.store.write(run_id, meta)
+        return jresp(att)
+
+
+    @serialized_run
     async def generate(self, req):
         p = await req.json()
-        run_id, bk = p["run_id"], p.get("backend") or next(iter(self.backends), "")
+        run_id, bk = p["run_id"], p.get("backend") or self._default_backend()
         backend = self.backends.get(bk)
         if backend is None:
             return jresp({"error": f"'{bk}' 백엔드를 사용할 수 없어요. config.json 의 backends 를 확인해 주세요."}, 400)
@@ -214,6 +294,11 @@ class Studio:
                 wf_api, seeds = workflow.build(tmpl, self.cfg["node_ids"], control_image=name, prompts=p["prompts"],
                                                seed1=p.get("seed1"), seed2=p.get("seed2"),
                                                prefix=f"VR360/{run_id}_a{n:02d}", settings=st, keep_mask=mask_name)
+                if kp.get("enabled", True) and kp.get("upscale_photo", True):
+                    # 원본 사진 자리 화질: 사진을 원래 해상도로 AI 업스케일 → 마지막에 이걸 붙임
+                    ph_name = await backend.upload(await asyncio.to_thread(self._source_png, run_id), f"{run_id}_a{n:02d}_photo.png")
+                    out_nodes["photo_up"] = workflow.add_photo_upscale(wf_api, ph_name, f"VR360/{run_id}_a{n:02d}",
+                                                                       self.cfg["model_fallbacks"]["UpscaleModelLoader"][0])
                 p["settings"] = {k: v for k, v in st.items() if k != "refine"}
             pid = await self._submit_workflow(backend, wf_api, os.path.join(adir, "workflow_api.json"))
         except Exception as e:
@@ -384,16 +469,12 @@ class Studio:
                     pl = att.get("placement") or {}
                     if kp.get("enabled", True) and att.get("mode", "generate") == "generate" and pl.get("hfov"):
                         # 원본 사진을 원래 해상도로 같은 자리에 다시 붙임 → 사진에 있던 건 절대 안 사라짐
-                        def _paste(dst=self.store.path(run_id, local)):
-                            fin, src = Image.open(dst), self.source(run_id)
-                            mode, scale = erp.photo_paste_mode(fin.width, src.width, float(pl["hfov"]),
-                                                               kp.get("paste_mode", "auto"))
-                            erp.paste_photo(fin, src, float(pl["yaw"]), float(pl["pitch"]),
-                                            float(pl["hfov"]), float(pl["vfov"]) if pl.get("vfov") else None,
-                                            kp.get("paste_feather", 0.05), mode=mode,
-                                            detail=float(kp.get("detail_strength", 0.9))).save(dst)
-                            return mode, scale
-                        mode, scale = await asyncio.to_thread(_paste)
+                        pf = next((x for x in st["files"] if x["node"] == out_nodes.get("photo_up")), None)
+                        if pf:                       # 원래 해상도로 AI 업스케일한 원본 사진
+                            with open(self.store.path(run_id, f"a{n:02d}", "photo_up.png"), "wb") as fp:
+                                fp.write(await backend.fetch(pf))
+                        mode, scale = await asyncio.to_thread(self._paste_photo_file, run_id, n, att,
+                                                              self.store.path(run_id, local))
                         att["photo_pasted"] = mode
                         print(f"[pano360] 원본 사진 다시 붙임: {mode} (사진이 최종보다 {scale:.2f}배 흐림)")
                     try:
@@ -539,384 +620,8 @@ class Studio:
         self.store.write(run_id, meta)
         return jresp(plan)
 
-    # ------------------------------------------------------------------ 영상화: 영역 영상 생성 → 360 에 합성
-    def _mcfg(self):
-        m = {"duration": 1, "fps": 24, "video_width": 4096, "crf": 18, "loop_fade": 6, "sam": True,
-             "sam_ckpt": "sam3.1_multiplex_fp16.safetensors", "sam_threshold": 0.4, "mask_feather": 14,
-             "ckpt": "ltx-2.3-22b-dev-fp8.safetensors", "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
-             "distilled_lora": "ltx-2.3-22b-distilled-lora-384.safetensors",
-             "cinemagraph_lora": "ltx-2.3-22b-lora-cinemagraph-0.9.safetensors",
-             "upscaler": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors", "img_compression": 18,
-             "influence": True, "global_width": 1536, "global_lora_strength": 1.0, "influence_max_shift_deg": 4.0}
-        m.update(self.cfg.get("motion", {}))
-        return m
-
-    @serialized_run
-    async def motion_render(self, req):
-        """영역마다 (SAM 마스크 + LTX 영상) 작업 제출."""
-        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        p = await req.json()
-        meta = self.store.read(run_id)
-        att = meta["attempts"][n - 1]
-        plan = att.get("motion") or {}
-        if not plan.get("regions"):
-            return jresp({"error": "먼저 '움직일 곳 찾기'로 영역을 만들어 주세요."}, 400)
-        bk = p.get("backend") or self.cfg.get("motion", {}).get("backend") or next(iter(self.backends), "")
-        backend = self.backends.get(bk)
-        if backend is None:
-            return jresp({"error": f"'{bk}' 백엔드를 사용할 수 없어요."}, 400)
-        mc = self._mcfg()
-        if any(r.get("prompt_ver", 1) < llm.PROMPT_VER for r in plan["regions"]):   # 예전 계획 → 새 기본 프롬프트로
-            plan = self._motion_finish(plan)
-            meta["attempts"][n - 1]["motion"] = plan
-            self.store.write(run_id, meta)
-        dur = float(p.get("duration") or mc["duration"])
-        fps = int(p.get("fps") or mc["fps"])
-        d = f"a{n:02d}/motion"
-        jobs = []
-        try:
-            for i, r in enumerate(plan["regions"], 1):
-                with open(self.store.path(run_id, d, f"region_{i}.png"), "rb") as fp:
-                    name = await backend.upload(fp.read(), f"{run_id}_a{n:02d}_region_{i}.png")
-                job = {"i": i, "image": name}
-                if mc.get("sam"):
-                    try:
-                        g = workflow.build_sam_mask(name, r["element"], ckpt=mc["sam_ckpt"], threshold=mc["sam_threshold"],
-                                                    prefix=f"VR360/{run_id}_a{n:02d}_r{i}")
-                        job["mask_pid"] = await self._submit_workflow(backend, g, self.store.path(run_id, d, f"workflow_mask_{i}.json"))
-                    except Exception as e:                  # SAM 모델이 없으면 둥근 마스크로
-                        job["mask_error"] = str(e)[:300]
-                if mc.get("range_mode", True) and job.get("mask_pid"):
-                    pass                                    # 범위 고정 생성: SAM 이 끝나면 범위 마스크로 영상 제출 (상태 확인 때)
-                else:
-                    await self._submit_region_video(backend, run_id, n, r, job, mc, dur, fps, p.get("seed"), None)
-                jobs.append(job)
-            glob = None
-            if mc.get("influence") and llm.needs_global(plan["regions"]):
-                glob = await self._submit_global(backend, run_id, n, plan, mc, dur, fps, p.get("seed"))
-        except Exception as e:
-            print(f"[pano360] 영상 작업 제출 실패: {e}")
-            return jresp({"error": comfy.explain_comfy_error(str(e))}, 502)
-        render = {"state": "running", "backend": bk, "duration": dur, "fps": fps, "jobs": jobs, "seed_req": p.get("seed"),
-                  "range_mode": bool(mc.get("range_mode", True)), "created": time.strftime("%Y-%m-%d %H:%M:%S")}
-        if glob:
-            render["global"] = glob
-        meta = self.store.read(run_id)
-        meta["attempts"][n - 1].setdefault("motion", {})["render"] = render
-        self.store.write(run_id, meta)
-        return jresp(render)
-
-    async def _submit_region_video(self, backend, run_id, n, r, job, mc, dur, fps, seed, sam_png):
-        """영역 영상 제출. 범위 고정 생성이면 SAM 요소를 퍼짐만큼 넓힌 범위 마스크를 같이 보냄."""
-        d = f"a{n:02d}/motion"
-        i = job["i"]
-        w, h = r.get("crop_size") or erp.region_size(r)
-        rng_name = None
-        if mc.get("range_mode", True):
-            def mk():
-                m, src = cinemagraph.range_mask((w, h), sam_png, r.get("spread", "near"))
-                png = cinemagraph.mask_png(m)
-                with open(self.store.path(run_id, d, f"range_{i}.png"), "wb") as fp:
-                    fp.write(png)
-                return png, src
-            png, src = await asyncio.to_thread(mk)
-            rng_name = await backend.upload(png, f"{run_id}_a{n:02d}_range_{i}.png")
-            job["range_src"] = src
-        g, s = workflow.build_cinemagraph(job["image"], positive=r["positive"], negative=r["negative"], width=w, height=h,
-                                          duration=dur, fps=fps, seed=seed, m=mc, lora_strength=r.get("strength", 1.2),
-                                          prefix=f"VR360/{run_id}_a{n:02d}_r{i}", range_mask=rng_name)
-        job.update(seed=s, video_pid=await self._submit_workflow(backend, g, self.store.path(run_id, d, f"workflow_video_{i}.json")))
-
-    async def _submit_global(self, backend, run_id, n, plan, mc, dur, fps, seed):
-        """영향 퍼짐용: 360 전체 저해상도 영상 + 영향 대상 SAM 마스크 (원인 영역이 가운데 오게 돌려서)."""
-        d = f"a{n:02d}/motion"
-        gw = int(mc["global_width"]) // 64 * 64
-        gh = gw // 2
-        src = max(plan["regions"], key=lambda r: llm.SPREAD_DEG.get(r.get("spread"), 0) +
-                  sum(x.get("strength", 0) for x in r.get("influence") or []))
-        roll = influence.roll_for(src["yaw"], gw)
-        att = self.store.read(run_id)["attempts"][n - 1]
-
-        def prep():
-            im = Image.open(self._final_path(run_id, att)).convert("RGB").resize((gw, gh), Image.LANCZOS)
-            im = Image.fromarray(np.roll(np.asarray(im), roll, axis=1))
-            out = self.store.path(run_id, d, "global_in.png")
-            im.save(out)
-            with open(out, "rb") as fp:
-                return fp.read()
-        name = await backend.upload(await asyncio.to_thread(prep), f"{run_id}_a{n:02d}_global.png")
-        rng_name = None
-        if mc.get("range_mode", True):                  # 원인 주변 퍼짐 범위만 움직이고 나머지 360 은 고정
-            def mk():
-                src_list = [{"yaw": r["yaw"], "pitch": r["pitch"], "range": r.get("spread", "near"), "strength": 1.0}
-                            for r in plan["regions"] if r.get("spread", "near") in ("near", "wide")]
-                for r in plan["regions"]:
-                    for x in r.get("influence") or []:
-                        if x.get("range") in ("near", "wide"):
-                            src_list.append({"yaw": r["yaw"], "pitch": r["pitch"], "range": x["range"], "strength": 1.0})
-                m = np.zeros((gh, gw), np.float32)
-                for sdef in src_list:
-                    R = influence.RANGE_DEG[sdef["range"]] * 1.15
-                    f = np.clip(1 - influence.angle_map(gw, gh, sdef["yaw"], sdef["pitch"]) / R, 0, 1)
-                    m = np.maximum(m, np.clip(f * 3, 0, 1))
-                m = np.roll(m, roll, axis=1)
-                png = cinemagraph.mask_png(m)
-                with open(self.store.path(run_id, d, "global_range.png"), "wb") as fp:
-                    fp.write(png)
-                return png
-            rng_name = await backend.upload(await asyncio.to_thread(mk), f"{run_id}_a{n:02d}_global_range.png")
-        pr = llm.global_motion_prompt(plan["regions"], plan.get("lighting", ""))
-        g, gseed = workflow.build_cinemagraph(name, positive=pr["positive"], negative=pr["negative"], width=gw, height=gh,
-                                              duration=dur, fps=fps, seed=seed, m=mc,
-                                              lora_strength=mc.get("global_lora_strength", 1.0),
-                                              prefix=f"VR360/{run_id}_a{n:02d}_g", range_mask=rng_name)
-        glob = {"image": name, "roll": roll, "size": [gw, gh], "seed": gseed, "positive": pr["positive"],
-                "video_pid": await self._submit_workflow(backend, g, self.store.path(run_id, d, "workflow_global.json")),
-                "targets": []}
-        for i, r in enumerate(plan["regions"]):
-            for j, x in enumerate(r.get("influence") or []):
-                if x.get("range") not in ("near", "wide") or x.get("strength", 0) <= 0:
-                    continue
-                t = {"ri": i, "xi": j, "target": x["target"]}
-                try:
-                    gm = workflow.build_sam_mask(name, x["target"], ckpt=mc["sam_ckpt"], threshold=mc["sam_threshold"],
-                                                 prefix=f"VR360/{run_id}_a{n:02d}_g{i + 1}_{j + 1}")
-                    t["pid"] = await self._submit_workflow(backend, gm, self.store.path(run_id, d, f"workflow_inf_{i + 1}_{j + 1}.json"))
-                except Exception as e:
-                    t["error"] = str(e)[:300]
-                glob["targets"].append(t)
-        return glob
-
-    @serialized_run
-    async def motion_render_status(self, req):
-        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        meta = self.store.read(run_id)
-        plan = meta["attempts"][n - 1].get("motion") or {}
-        rd = plan.get("render")
-        if not rd:
-            return jresp({"state": "none"})
-        if rd["state"] in ("done", "error", "clips"):
-            return jresp(rd)
-        backend = self.backends.get(rd["backend"])
-        mc = self._mcfg()
-        mc["range_mode"] = rd.get("range_mode", mc.get("range_mode", True))
-        pending = None
-        for j in rd["jobs"]:                                  # SAM 끝난 영역 → 범위 마스크 만들어 영상 제출
-            if j.get("video_pid"):
-                continue
-            ms = await backend.status(j["mask_pid"], ["6"]) if j.get("mask_pid") else {"state": "done", "files": []}
-            if ms["state"] not in ("done", "error"):
-                pending = pending or j["i"]
-                continue
-            mf = next((f for f in ms.get("files", []) if f["node"] == "6"), None)
-            sam = await backend.fetch(mf) if mf else None
-            if ms["state"] == "error":
-                j["mask_error"] = str(ms.get("error", ""))[:300]
-            try:
-                await self._submit_region_video(backend, run_id, n, plan["regions"][j["i"] - 1], j, mc,
-                                                rd["duration"], rd["fps"], rd.get("seed_req"), sam)
-            except Exception as e:
-                rd.update(state="error", error=f"영역 {j['i']} 영상 제출 실패: {comfy.explain_comfy_error(str(e))}")
-                self.store.write(run_id, meta)
-                return jresp(rd)
-            self.store.write(run_id, meta)
-        if pending:
-            return jresp({**rd, "progress": f"영역 {pending}/{len(rd['jobs'])} 움직임 범위(SAM) 찾는 중"})
-        k = len(rd["jobs"])
-        done, prog, results = 0, None, []
-        for j in rd["jobs"]:
-            vs = await backend.status(j["video_pid"], ["33"])
-            ms = await backend.status(j["mask_pid"], ["6"]) if j.get("mask_pid") else {"state": "done", "files": []}
-            if vs["state"] == "error":
-                rd.update(state="error", error=f"영역 {j['i']} 영상 생성 실패: {vs.get('error')}")
-                self.store.write(run_id, meta)
-                return jresp(rd)
-            if vs["state"] == "done" and ms["state"] in ("done", "error"):
-                done += 1
-            elif prog is None:
-                prog = (j["i"], vs)
-            results.append((j, vs, ms))
-        glob = rd.get("global")
-        if glob and not glob.get("error"):
-            gs = await backend.status(glob["video_pid"], ["33"])
-            if gs["state"] == "error":
-                glob["error"] = f"전체 영상 실패: {gs.get('error')}"     # 영향 퍼짐 없이 계속
-            else:
-                tdone = True
-                for t in glob["targets"]:
-                    if t.get("pid"):
-                        ts = await backend.status(t["pid"], ["6"])
-                        tdone = tdone and ts["state"] in ("done", "error")
-                k += 1
-                if gs["state"] == "done" and tdone:
-                    done += 1
-                elif prog is None:
-                    prog = ("전체", gs)
-        if done < k:
-            i, vs = prog
-            step = {"19": "1단계 생성", "23": "2배 업스케일", "30": "2단계 생성", "32": "디코드"}.get(str(vs.get("node")), "준비")
-            who = "360 전체(영향 퍼짐)" if i == "전체" else f"영역 {i}/{len(rd['jobs'])}"
-            return jresp({**rd, "progress": f"{who} 영상 만드는 중 · {step}" if vs.get("state") == "running"
-                          else f"{who} 대기 중",
-                          "value": vs.get("value"), "max": vs.get("max")})
-        rd.update(state="clips", clips_finished=time.strftime("%Y-%m-%d %H:%M:%S"))   # 합성은 '360 합성' 버튼으로 따로
-        self.store.write(run_id, meta)
-        return jresp(rd)
-
-    @serialized_run
-    async def motion_compose(self, req):
-        """이미 만든 영역 영상 + 마스크를 받아 360 에 합성 (영상은 다시 만들지 않음, 몇 번이든 가능)."""
-        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        meta = self.store.read(run_id)
-        plan = meta["attempts"][n - 1].get("motion") or {}
-        rd = plan.get("render")
-        if not rd or not (rd["state"] in ("clips", "done") or (rd["state"] == "error" and rd.get("compose_failed"))):
-            return jresp({"error": "먼저 '① 영역 영상 만들기'를 끝내 주세요."}, 400)
-        backend = self.backends.get(rd["backend"])
-        if backend is None:
-            return jresp({"error": f"'{rd['backend']}' 백엔드를 사용할 수 없어요."}, 400)
-        results = []
-        try:
-            for j in rd["jobs"]:
-                vs = await backend.status(j["video_pid"], ["33"])
-                ms = await backend.status(j["mask_pid"], ["6"]) if j.get("mask_pid") else {"state": "done", "files": []}
-                if vs["state"] != "done":
-                    raise RuntimeError(f"영역 {j['i']} 영상을 서버에서 찾지 못했어요 ({vs['state']}). 영역 영상을 다시 만들어 주세요.")
-                results.append((j, vs, ms))
-            info = await self._compose_motion(run_id, n, plan, rd, results, backend)
-            for k in ("error", "compose_failed", "compose_error"):
-                rd.pop(k, None)
-            rd.update(state="done", finished=time.strftime("%Y-%m-%d %H:%M:%S"), **info)
-        except Exception as e:
-            print(f"[pano360] 영상 합성 실패: {e}")
-            for k in ("error", "compose_failed"):
-                rd.pop(k, None)
-            rd.update(state="clips", compose_error=str(e)[:500])
-            self.store.write(run_id, meta)
-            return jresp({"error": f"합성 실패: {e}"}, 500)
-        self.store.write(run_id, meta)
-        return jresp(rd)
-
-    async def _compose_motion(self, run_id, n, plan, rd, results, backend):
-        d = f"a{n:02d}/motion"
-        mc = self._mcfg()
-        regs, notes = [], []
-        for (j, vs, ms), r in zip(results, plan["regions"]):
-            files = sorted((f for f in vs["files"] if f["node"] == "33"), key=lambda f: f["filename"])
-            datas = [await backend.fetch(f) for f in files]
-            mfile = next((f for f in ms.get("files", []) if f["node"] == "6"), None)
-            sam = await backend.fetch(mfile) if mfile else None
-            if sam:
-                with open(self.store.path(run_id, d, f"mask_{j['i']}.png"), "wb") as fp:
-                    fp.write(sam)
-
-            def prep(r=r, j=j, datas=datas, sam=sam):
-                crop = np.asarray(Image.open(self.store.path(run_id, d, f"region_{j['i']}.png")).convert("RGB"), np.float32)
-                size = (crop.shape[1], crop.shape[0])
-                fr = cinemagraph.load_frames(datas, size)
-                stab = {}
-                rpath = self.store.path(run_id, d, f"range_{j['i']}.png")
-                rng = (np.asarray(Image.open(rpath).convert("L").resize(size, Image.BILINEAR), np.float32) / 255.0
-                       if j.get("range_src") and os.path.isfile(rpath) else None)
-                if mc.get("stabilize", True):                    # 영상 모델의 카메라 흔들림 제거 (원본 기준 정렬)
-                    if rng is not None:
-                        excl = rng
-                    else:
-                        excl, _ = cinemagraph.element_mask(size, sam, feather_px=0, grow_px=12) if sam else (None, "")
-                    fr, stab = cinemagraph.stabilize(fr, crop, excl)
-                if rng is not None:                                 # 범위 고정 생성: 범위 그대로 (밖은 이미 원본)
-                    mask, src, mst = rng, "range:" + j["range_src"], {}
-                elif r.get("spread", "near") != "none" and mc.get("mask_mode", "motion") == "motion":
-                    # 요소 + 영상에서 실제로 움직인 곳 (요소 때문에 생긴 주변 물결·물보라 포함)
-                    mask, src, mst = cinemagraph.moving_mask(size, sam, fr, feather_px=mc["mask_feather"])
-                else:                                               # 요소 모양 안만
-                    (mask, src), mst = cinemagraph.element_mask(size, sam, feather_px=mc["mask_feather"]), {}
-                leak = cinemagraph.static_leak(fr, mask)
-                fr = cinemagraph.make_loop(cinemagraph.match_first_frame(fr, crop, mask), mc["loop_fade"])
-                Image.fromarray((mask * 255).astype(np.uint8)).save(self.store.path(run_id, d, f"mask_used_{j['i']}.png"))
-                return {"region": r, "size": size, "frames": fr, "mask": mask}, src, leak, {**mst, **stab}
-            item, src, leak, mst = await asyncio.to_thread(prep)
-            regs.append(item)
-            notes.append({"i": j["i"], "frames": len(datas), "mask": src, "leak": leak, **mst,
-                          "mask_error": j.get("mask_error", "")})
-        att = self.store.read(run_id)["attempts"][n - 1]
-        warp, ginfo = await self._global_warp(run_id, n, plan, rd, backend, mc, att)
-        out = self.store.path(run_id, d, "motion_360.mp4")
-        info = await asyncio.to_thread(cinemagraph.compose_video, self._final_path(run_id, att), regs, out,
-                                       fps=rd["fps"], width=mc["video_width"], crf=mc["crf"],
-                                       preview_png=self.store.path(run_id, d, "motion_first.jpg"), warp=warp)
-        info["influence"] = ginfo
-        t = int(time.time())
-        return {**info, "regions": notes, "video": f"/runs/{run_id}/{d}/motion_360.mp4?t={t}",
-                "preview": f"/runs/{run_id}/{d}/motion_first.jpg?t={t}"}
-
-    async def _global_warp(self, run_id, n, plan, rd, backend, mc, att):
-        """전체 영상의 흐름 × 영향 가중치 → FlowWarp (없거나 실패하면 None, 사유)."""
-        glob = rd.get("global")
-        if not glob:
-            return None, {"used": False, "note": "영향 퍼짐 없음"}
-        if glob.get("error"):
-            return None, {"used": False, "note": glob["error"]}
-        d = f"a{n:02d}/motion"
-        gw, gh = glob["size"]
-        gs = await backend.status(glob["video_pid"], ["33"])
-        files = sorted((f for f in gs.get("files", []) if f["node"] == "33"), key=lambda f: f["filename"])
-        if gs["state"] != "done" or not files:
-            return None, {"used": False, "note": "전체 영상을 찾지 못했어요"}
-        datas = [await backend.fetch(f) for f in files]
-        masks, notes = {}, []
-        for t in glob["targets"]:
-            png = None
-            if t.get("pid"):
-                ts = await backend.status(t["pid"], ["6"])
-                mf = next((f for f in ts.get("files", []) if f["node"] == "6"), None)
-                png = await backend.fetch(mf) if mf else None
-            masks[(t["ri"], t["xi"])] = png
-            notes.append({"target": t["target"], "mask": bool(png), "error": t.get("error", "")})
-
-        def prep():
-            fr = np.stack([np.asarray(Image.open(io.BytesIO(b)).convert("RGB").resize((gw, gh), Image.LANCZOS))
-                           for b in datas])
-            sources = []
-            for i, r in enumerate(plan["regions"]):
-                tg = []
-                for j, x in enumerate(r.get("influence") or []):
-                    m = influence.load_mask(masks.get((i, j)), gw, gh)
-                    if m is not None:
-                        m = np.roll(m, -glob["roll"], axis=1)          # 돌렸던 것을 되돌림
-                        Image.fromarray((m * 255).astype(np.uint8)).save(self.store.path(run_id, d, f"inf_mask_{i + 1}_{j + 1}.png"))
-                        tg.append({"mask": m, "range": x["range"], "strength": x["strength"]})
-                if tg:
-                    sources.append({"yaw": r["yaw"], "pitch": r["pitch"], "targets": tg})
-            # 대상을 안 적어도: 전체 영상에서 실제로 움직인 곳 × 원인에서의 거리 감쇠 (영역의 '퍼짐' 범위)
-            flows = influence.backward_flows(fr)
-            if glob["roll"]:
-                flows = np.roll(flows, -glob["roll"], axis=2)
-            auto = []
-            for r in plan["regions"]:
-                if r.get("spread", "none") in ("near", "wide"):
-                    auto.append({"yaw": r["yaw"], "pitch": r["pitch"], "range": r["spread"],
-                                 "strength": r.get("spread_strength", 0.7)})
-            wgt = influence.influence_weight(gw, gh, sources) if sources else np.zeros((gh, gw), np.float32)
-            if auto:
-                wgt = np.maximum(wgt, influence.auto_weight(flows, auto, w_px=gw))
-            if not wgt.any():
-                return None, 0.0
-            Image.fromarray((wgt * 255).astype(np.uint8)).save(self.store.path(run_id, d, "influence_weight.png"))
-            hi = np.asarray(Image.open(self._final_path(run_id, att)).convert("RGB"))
-            W = int(mc["video_width"])
-            fw = influence.FlowWarp(fr, wgt, 0, hi, W, W // 2, fade=mc["loop_fade"],
-                                    max_shift_deg=mc["influence_max_shift_deg"], flows=flows)
-            return fw, float(fw.active.mean())
-        fw, ratio = await asyncio.to_thread(prep)
-        if fw is None:
-            return None, {"used": False, "note": "전체 영상에서 원인 주변에 움직인 곳이 없어요", "targets": notes}
-        t = int(time.time())
-        return fw, {"used": True, "ratio": round(ratio, 4), "max_shift_px": round(fw.max_shift, 1), "targets": notes,
-                    "weight": f"/runs/{run_id}/{d}/influence_weight.png?t={t}"}
-
-    # ================================================================== 사건 영상 (한 번 일어나는 연출)
-    EVENT_VIEW = (2560, 1440)          # 사건 화면 (16:9). 영상 모델은 1280×720 으로 줄여 씀
+    # ================================================================== 사건 연출 (프롬프트 · 움직일 범위)
+    EVENT_VIEW = (2560, 1440)          # 사건 화면 (16:9)
 
     def _event_finish(self, ev, lighting=""):
         ev = llm.clamp_event(ev)
@@ -936,15 +641,10 @@ class Studio:
         small = img.resize((2048, 1024), Image.LANCZOS)
         erp.motion_overlay(small, [{"yaw": ev["yaw"], "pitch": ev["pitch"], "hfov": ev["hfov"], "aspect": w / h}]) \
             .save(self.store.path(run_id, d, "overlay.jpg"), quality=88)
-        wfs = {}
-        for v in ("wan14", "wan5"):
-            g = workflow_ui.wan_event_workflow(ev["positive"], ev["negative"], image=f"{run_id}_event_view.png", variant=v,
-                                               seconds=ev["seconds"])
-            with open(self.store.path(run_id, d, f"comfy_event_{v}.json"), "w", encoding="utf-8") as fp:
-                json.dump(g, fp, ensure_ascii=False, indent=1)
-            wfs[v] = f"/runs/{run_id}/{d}/comfy_event_{v}.json?t={t}"
         ev.update(view=f"/runs/{run_id}/{d}/event_view.png?t={t}", view_name=f"{run_id}_event_view.png",
-                  overlay=f"/runs/{run_id}/{d}/overlay.jpg?t={t}", workflows=wfs, view_size=[w, h])
+                  overlay=f"/runs/{run_id}/{d}/overlay.jpg?t={t}", view_size=[w, h],
+                  ltx360={"positive": self._ltx360_prompt(ev), "negative": workflow.LTX360_NEG})
+        ev.pop("workflows", None)
         return ev
 
     @serialized_run
@@ -970,6 +670,9 @@ class Studio:
         ev.update(model=model, usage=usage, note=p.get("note", ""), created=time.strftime("%Y-%m-%d %H:%M:%S"))
         ev = await asyncio.to_thread(self._event_assets, run_id, n, ev)
         meta = self.store.read(run_id)
+        prev = meta["attempts"][n - 1].get("event") or {}
+        if prev.get("video"):
+            ev["video"] = prev["video"]                       # 사건을 다시 짜도 만든 영상 기록은 유지
         meta["attempts"][n - 1]["event"] = ev
         self.store.write(run_id, meta)
         return jresp(ev)
@@ -996,267 +699,228 @@ class Studio:
         self.store.write(run_id, meta)
         return jresp(ev)
 
-    async def event_compose(self, req):
-        """ComfyUI 에서 만든 사건 영상(MP4)을 올리면 → 달라진 곳만 360 원본 위에 섞어 MP4."""
+    @staticmethod
+    def _ltx360_prompt(ev: dict) -> str:
+        if ev.get("event"):
+            event = ev["event"].strip().rstrip(".") + "." + (f" At the peak, {ev['peak'].strip().rstrip('.')}." if ev.get("peak") else "")
+        else:
+            event = workflow.LTX360_EVENT
+        keep = (ev.get("keep") or "The bridge, rocks, cliffs and buildings").strip().rstrip(".")
+        return workflow.LTX360_POS.format(event=event, keep=keep[:1].upper() + keep[1:])
+
+    async def event_base(self, req):
+        """범위 칠하기용: 결과 360 작은 그림(2048) + 저장된 범위."""
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        self.store.path(run_id)
+        att = self.store.read(run_id)["attempts"][n - 1]
+        d = f"a{n:02d}/event"
+        os.makedirs(self.store.path(run_id, d), exist_ok=True)
+        base = self.store.path(run_id, d, "base_2k.jpg")
+        if not os.path.isfile(base):
+            def mk():
+                im = Image.open(self._final_path(run_id, att)).convert("RGB")
+                im.resize((2048, 1024), Image.LANCZOS).save(base, quality=88)
+            await asyncio.to_thread(mk)
+        mp = self.store.path(run_id, d, "mask.png")
+        v = int(os.path.getmtime(mp)) if os.path.isfile(mp) else 0
+        return jresp({"base": f"/runs/{run_id}/{d}/base_2k.jpg", "mask": f"/runs/{run_id}/{d}/mask.png?v={v}" if v else None})
+
+    async def event_mask(self, req):
+        """웹에서 칠한 움직임 범위 저장 (흰색 = 영상, 검정 = 원본). 빈 값이면 지움."""
+        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
+        p = await req.json()
+        d = f"a{n:02d}/event"
+        os.makedirs(self.store.path(run_id, d), exist_ok=True)
+        mp = self.store.path(run_id, d, "mask.png")
+        data = p.get("png") or ""
+        if not data:
+            if os.path.isfile(mp):
+                os.remove(mp)
+            return jresp({"mask": None, "cover": 0})
+        import base64
+        try:
+            raw = base64.b64decode(data.split(",", 1)[-1])
+            im = Image.open(io.BytesIO(raw)).convert("L").resize((2048, 1024), Image.BILINEAR)
+        except Exception:
+            return jresp({"error": "범위 그림을 읽지 못했어요."}, 400)
+        im.save(mp)
+        cover = float(np.asarray(im, np.float32).mean() / 255.0)
+        return jresp({"mask": f"/runs/{run_id}/{d}/mask.png?v={int(time.time())}", "cover": round(cover, 4)})
+
+    # ------------------------------------------------------------------ 6단계: 마스크 인페인팅 노드로 360 영상
+    def _video_template(self):
+        path = self.cfg.get("video_template", "video_nodes/quest360_flood_mask_inpaint_4k.json")
+        path = path if os.path.isabs(path) else os.path.join(HERE, path)
+        with open(path, encoding="utf-8") as fp:
+            return json.load(fp)
+
+    @staticmethod
+    def _mask_rect(mask_path, canvas, pad):
+        """칠한 범위(흰색)를 감싸는 사각형 → 노드 캔버스 좌표 (x, y, w, h). 경계 흐림만큼 넓힘."""
+        m = np.asarray(Image.open(mask_path).convert("L").resize(canvas, Image.BILINEAR)) > 127
+        ys, xs = np.nonzero(m)
+        if not len(xs):
+            return None
+        W, H = canvas
+        x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + 1 + pad)
+        y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + 1 + pad)
+        return int(x0), int(y0), int(x1 - x0), int(y1 - y0)
+
+    async def event_video_start(self, req):
+        """화질 올린 360 + 칠한 범위 + 프롬프트 → 사용자 노드 파일(video_template)에 값만 넣어 실행.
+        노드 파일이 사각 마스크(SolidMask+MaskComposite)면 칠한 범위의 좌표를, 마스크 그림(LoadImage)이면 그림을 넣음."""
+        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
+        p = await req.json()
         meta = self.store.read(run_id)
         att = meta["attempts"][n - 1]
-        ev = att.get("event") or {}
-        form = await req.post()
-        f = form.get("video")
-        if f is None or not hasattr(f, "file"):
-            return jresp({"error": "영상 파일이 없어요."}, 400)
+        bk = p.get("backend") or self._default_backend()
+        backend = self.backends.get(bk)
+        if backend is None:
+            return jresp({"error": f"'{bk}' 실행 위치를 사용할 수 없어요."}, 400)
         d = f"a{n:02d}/event"
-        os.makedirs(self.store.path(run_id, d), exist_ok=True)
-        gen = self.store.path(run_id, d, "event_gen.mp4")
-        with open(gen, "wb") as fp:
-            shutil.copyfileobj(f.file, fp)
-        mc = self._mcfg()
-
-        def work():
-            frames, fps = eventmod.read_video(gen)
-            hi = np.asarray(Image.open(self._final_path(run_id, att)).convert("RGB"))
-            if eventmod.is_erp(frames):                     # 360 전체 영상 (LTX + 360 LoRA 워크플로 등)
-                return eventmod.compose_event_erp(hi, frames, self.store.path(run_id, d, "event_360.mp4"), fps=fps,
-                                                  width=mc.get("event_width", 4096), crf=mc.get("event_crf", 17),
-                                                  codec=mc.get("codec", "hevc"),
-                                                  preview=self.store.path(run_id, d, "event_peak.jpg"),
-                                                  alpha_png=self.store.path(run_id, d, "event_alpha.png"))
-            if not ev.get("view"):
-                raise RuntimeError("평면 사건 영상이면 먼저 '사건 만들기'로 사건 화면을 만들어 주세요 (360 전체 2:1 영상은 바로 가능).")
-            crop = np.asarray(Image.open(self.store.path(run_id, d, "event_view.png")).convert("RGB"))
-            return eventmod.compose_event(hi, ev, frames, crop, self.store.path(run_id, d, "event_360.mp4"), fps=fps,
-                                          width=mc.get("event_width", 4096), crf=mc.get("event_crf", 17),
-                                          codec=mc.get("codec", "hevc"),
-                                          preview=self.store.path(run_id, d, "event_peak.jpg"),
-                                          alpha_png=self.store.path(run_id, d, "event_alpha.png"))
+        mp = self.store.path(run_id, d, "mask.png")
+        if not os.path.isfile(mp):
+            return jresp({"error": "먼저 움직일 범위를 칠하고 '범위 저장'을 눌러 주세요."}, 400)
         try:
-            info = await asyncio.to_thread(work)
+            src = self._final_path(run_id, att)
+            tmpl = self._video_template()
         except Exception as e:
-            print(f"[pano360] 사건 합성 실패: {e}")
-            return jresp({"error": f"합성 실패: {e}"}, 500)
-        t = int(time.time())
-        info.update(video=f"/runs/{run_id}/{d}/event_360.mp4?t={t}", preview=f"/runs/{run_id}/{d}/event_peak.jpg?t={t}",
-                    alpha=f"/runs/{run_id}/{d}/event_alpha.png?t={t}", finished=time.strftime("%Y-%m-%d %H:%M:%S"))
+            return jresp({"error": str(e)}, 400)
+        pos = (p.get("positive") or "").strip() or self._ltx360_prompt(att.get("event") or {})
+        neg = (p.get("negative") or "").strip() or workflow.LTX360_NEG
+        secs = max(2, min(8, int(p.get("seconds") or 4)))
+        mode = workflow.video_mask_mode(tmpl)
+        rect = None
+        if mode == "rect":
+            f = workflow._ui_node(tmpl, workflow.VIDEO_IDS["rect_feather"])
+            pad = max((f or {}).get("widgets_values_named", {"left": 0}).values(), default=0) if f else 0
+            rect = await asyncio.to_thread(self._mask_rect, mp, workflow.video_rect_canvas(tmpl), int(pad))
+            if not rect:
+                return jresp({"error": "칠한 범위가 비어 있어요."}, 400)
+
+        def pano_jpg():                                   # 노드가 2K~4K 로 쓰므로 4K JPG 로 올림 (8K PNG 는 너무 큼)
+            im = Image.open(src).convert("RGB")
+            if im.width > 4096:
+                im = im.resize((4096, 2048), Image.LANCZOS)
+            b = io.BytesIO()
+            im.save(b, "JPEG", quality=96)
+            return b.getvalue()
+        try:
+            name = await backend.upload(await asyncio.to_thread(pano_jpg), f"{run_id}_a{n:02d}_pano4k.jpg")
+            mname = None
+            if mode == "image":
+                with open(mp, "rb") as fp:
+                    mname = await backend.upload(fp.read(), f"{run_id}_a{n:02d}_motion_mask.png")
+            ui, seed, info = workflow.fill_video_node(tmpl, image=name, positive=pos, negative=neg, seconds=secs,
+                                                      lora_strength=p.get("lora_strength"), seed=p.get("seed"),
+                                                      prefix=f"VR360/{run_id}_a{n:02d}_flood", mask_image=mname, rect=rect)
+            with open(self.store.path(run_id, d, "video_node.json"), "w", encoding="utf-8") as fp:
+                json.dump(ui, fp, ensure_ascii=False, indent=1)     # 값이 들어간 노드 파일 (ComfyUI 에서 그대로 열림)
+            g, saves = workflow.video_node_api(ui)
+            pid = await self._submit_workflow(backend, g, self.store.path(run_id, d, "workflow_video.json"))
+        except Exception as e:
+            return jresp({"error": comfy.explain_comfy_error(str(e))}, 502)
+        vid = {"state": "running", "backend": bk, "prompt_id": pid, "saves": saves, "seed": seed, "seconds": secs,
+               "fps": info["fps"], "mask_mode": mode, "rect": rect, "template": os.path.basename(self.cfg.get("video_template", "")),
+               "node_url": f"/runs/{run_id}/{d}/video_node.json?t={int(time.time())}",
+               "positive": pos, "negative": neg, "lora_strength": p.get("lora_strength"),
+               "created": time.strftime("%Y-%m-%d %H:%M:%S")}
         async with self.locks.setdefault(run_id, asyncio.Lock()):
             meta = self.store.read(run_id)
-            meta["attempts"][n - 1].setdefault("event", {})["result"] = info
+            meta["attempts"][n - 1].setdefault("event", {})["video"] = vid
             self.store.write(run_id, meta)
-        return jresp(info)
+        return jresp(vid)
 
-    # ------------------------------------------------------------------ 6단계: 효과 레이어 (바탕 + 고른 효과 섞기)
-    def _layers(self, run_id, n):
-        att = self.store.read(run_id)["attempts"][n - 1]
-        return att, (att.get("event") or {}), list((att.get("event") or {}).get("layers") or [])
-
-    def _save_layers(self, run_id, n, lays):
-        meta = self.store.read(run_id)
-        meta["attempts"][n - 1].setdefault("event", {})["layers"] = lays
-        self.store.write(run_id, meta)
-
-    async def event_layer_add(self, req):
-        """효과 영상 올리기 → 레이어 추가 (2:1 이면 360 전체, 프리셋이면 효과만, 아니면 사건 화면 영상)."""
+    async def event_video_status(self, req):
+        """진행 확인. 끝나면 노드의 영상 출력(SaveVideo)을 받아 작업 폴더에 저장."""
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        self.store.path(run_id)
-        form = await req.post()
-        f = form.get("video")
-        if f is None or not hasattr(f, "file"):
-            return jresp({"error": "영상 파일이 없어요."}, 400)
-        preset = (form.get("preset") or "").strip() or None
-        async with self.locks.setdefault(run_id, asyncio.Lock()):
-            att, ev, lays = self._layers(run_id, n)
-            lid = max([l["id"] for l in lays] + [0]) + 1
-            d = f"a{n:02d}/event/layers"
-            os.makedirs(self.store.path(run_id, d), exist_ok=True)
-            path = self.store.path(run_id, d, f"L{lid}.mp4")
-            with open(path, "wb") as fp:
-                shutil.copyfileobj(f.file, fp)
+        vid = (self.store.read(run_id)["attempts"][n - 1].get("event") or {}).get("video")
+        if not vid:
+            return jresp({"state": "none"})
+        if vid["state"] in ("done", "error"):
+            return jresp(vid)
+        backend = self.backends.get(vid["backend"])
+        if backend is None:
+            return jresp({**vid, "state": "error", "error": "실행 위치가 없어졌어요."})
+        saves = vid.get("saves") or []
+        st = await backend.status(vid["prompt_id"], [s["node"] for s in saves])
+        if st["state"] == "error":
+            vid.update(state="error", error=comfy.explain_comfy_error(str(st.get("error", "")))[:800])
+        elif st["state"] != "done":
+            return jresp({**vid, "progress": st})
+        else:
             try:
-                info = await asyncio.to_thread(layermod.probe, path)
-            except Exception as e:
-                os.remove(path)
-                return jresp({"error": str(e)}, 400)
-            thumb = info.pop("thumb")
-            await asyncio.to_thread(lambda: Image.fromarray(thumb).resize(
-                (320, max(1, int(320 * thumb.shape[0] / thumb.shape[1])))).save(self.store.path(run_id, d, f"L{lid}.jpg"), quality=85))
-            lay = layermod.clamp_layer(layermod.default_layer(info, preset, ev))
-            lay.update(id=lid, file=f"{d}/L{lid}.mp4", src_name=getattr(f, "filename", ""), **info,
-                       thumb=f"/runs/{run_id}/{d}/L{lid}.jpg")
-            lays.append(lay)
-            self._save_layers(run_id, n, lays)
-        return jresp({"layers": lays})
-
-    async def event_layer_update(self, req):
-        """레이어 설정 저장 (켜기·시작·세기·섞는 방식·위치). 목록에서 빠진 레이어는 삭제."""
-        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        p = await req.json()
-        async with self.locks.setdefault(run_id, asyncio.Lock()):
-            att, ev, lays = self._layers(run_id, n)
-            by = {l["id"]: l for l in lays}
-            out = []
-            for x in p.get("layers", []):
-                if x.get("id") not in by:
-                    continue
-                l = dict(by[x["id"]])
-                for k in ("name", "enabled", "start", "opacity", "blend", "yaw", "pitch", "hfov", "key"):
-                    if k in x:
-                        l[k] = x[k]
-                out.append(layermod.clamp_layer(l))
-            self._save_layers(run_id, n, out)
-        return jresp({"layers": out})
-
-    async def _load_layers(self, run_id, n, att, lays):
-        sig = json.dumps([{k: l[k] for k in ("id", "kind", "key", "start", "opacity", "blend", "yaw", "pitch", "hfov")}
-                          for l in lays if l["enabled"]], sort_keys=True)
-        key = (run_id, n)
-        c = getattr(self, "_layer_cache", None)
-        if c and c[0] == key and c[1] == sig:
-            return c[2], c[3]
-        self._layer_cache = None                             # 메모리: 한 번에 하나만
-
-        def load():
-            hi = np.asarray(Image.open(self._final_path(run_id, att)).convert("RGB"))
-            vp = self.store.path(run_id, f"a{n:02d}", "event", "event_view.png")
-            plate = np.asarray(Image.open(vp).convert("RGB")) if os.path.isfile(vp) else None
-            return hi, [layermod.Loaded(l, self.store.path(run_id, *l["file"].split("/")), hi, plate)
-                        for l in lays if l["enabled"]]
-        hi, loaded = await asyncio.to_thread(load)
-        self._layer_cache = (key, sig, hi, loaded)
-        return hi, loaded
-
-    async def event_preview(self, req):
-        """매트 확인: 타임라인의 몇 시점에서 합성 결과 + 레이어별 섞이는 곳(색) 이미지."""
-        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        p = await req.json()
-        att, ev, lays = self._layers(run_id, n)
-        if not any(l["enabled"] for l in lays):
-            return jresp({"error": "켜진 효과 레이어가 없어요."}, 400)
-        try:
-            hi, loaded = await self._load_layers(run_id, n, att, lays)
-        except Exception as e:
-            return jresp({"error": f"레이어를 읽지 못했어요: {e}"}, 500)
-        k = max(2, min(12, int(p.get("count", 8))))
-        d = f"a{n:02d}/event/preview"
-        os.makedirs(self.store.path(run_id, d), exist_ok=True)
-
-        def work():
-            import cv2
-            base = cv2.resize(hi, (2048, 1024), interpolation=cv2.INTER_AREA)
-            fps, T = layermod.timeline(loaded)
-            times = [T * (i + 0.5) / k / fps for i in range(k)]
-            if p.get("t") is not None:
-                times = [float(p["t"])]
-            out = []
-            stamp = int(time.time() * 1000) % 10**9
-            for i, ts in enumerate(times):
-                fr, per = layermod.render(base, loaded, ts, matte=True)
-                mv = layermod.matte_view(base, per)
-                Image.fromarray(fr).save(self.store.path(run_id, d, f"comp_{i}.jpg"), quality=85)
-                Image.fromarray(mv).save(self.store.path(run_id, d, f"matte_{i}.jpg"), quality=85)
-                cov = [round(float(m.mean()), 4) if m is not None else None for m in per]
-                out.append({"t": round(ts, 2), "comp": f"/runs/{run_id}/{d}/comp_{i}.jpg?v={stamp}",
-                            "matte": f"/runs/{run_id}/{d}/matte_{i}.jpg?v={stamp}", "cover": cov})
-            return {"frames": out, "duration": round(T / fps, 2), "fps": round(fps, 2),
-                    "layers": [{"id": x.l["id"], "name": x.l.get("name"), "color": layermod.COLORS[j % len(layermod.COLORS)],
-                                "start_cover": round(float(x.cover[0]), 3), "end_cover": round(float(x.cover[-1]), 3),
-                                "peak_cover": round(float(x.cover.max()), 3), **x.stab} for j, x in enumerate(loaded)]}
-        try:
-            return jresp(await asyncio.to_thread(work))
-        except Exception as e:
-            return jresp({"error": f"미리보기 실패: {e}"}, 500)
-
-    async def event_compose_layers(self, req):
-        """켜진 효과 레이어를 모두 바탕 위에 섞어 4K 360 MP4."""
-        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        att, ev, lays = self._layers(run_id, n)
-        if not any(l["enabled"] for l in lays):
-            return jresp({"error": "켜진 효과 레이어가 없어요."}, 400)
-        mc = self._mcfg()
-        d = f"a{n:02d}/event"
-        try:
-            hi, loaded = await self._load_layers(run_id, n, att, lays)
-            info = await asyncio.to_thread(layermod.compose, hi, loaded, self.store.path(run_id, d, "event_360.mp4"),
-                                           width=mc.get("event_width", 4096), crf=mc.get("event_crf", 17),
-                                           codec=mc.get("codec", "hevc"), preview=self.store.path(run_id, d, "event_peak.jpg"))
-        except Exception as e:
-            print(f"[pano360] 레이어 합성 실패: {e}")
-            return jresp({"error": f"합성 실패: {e}"}, 500)
-        t = int(time.time())
-        info.update(video=f"/runs/{run_id}/{d}/event_360.mp4?t={t}", preview=f"/runs/{run_id}/{d}/event_peak.jpg?t={t}",
-                    finished=time.strftime("%Y-%m-%d %H:%M:%S"))
+                d = f"a{n:02d}/event"
+                t = int(time.time())
+                for s in saves:
+                    f = next((x for x in st["files"] if x["node"] == s["node"]), None)
+                    if not f:
+                        continue
+                    fn = f"flood_{s['node']}{'_audio' if s['audio'] else ''}.mp4"
+                    with open(self.store.path(run_id, d, fn), "wb") as fp:
+                        fp.write(await backend.fetch(f))
+                    key = "audio_url" if s["audio"] and not vid.get("audio_url") else "silent_url" if not vid.get("silent_url") else None
+                    if key:
+                        vid[key] = f"/runs/{run_id}/{d}/{fn}?t={t}"
+                if not vid.get("silent_url") and not vid.get("audio_url"):
+                    raise RuntimeError("결과 영상이 없어요")
+                vid.update(state="done", finished=time.strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception as ex:
+                vid.update(state="error", error=f"결과 받기 실패: {ex}")
         async with self.locks.setdefault(run_id, asyncio.Lock()):
             meta = self.store.read(run_id)
-            meta["attempts"][n - 1].setdefault("event", {})["result"] = info
+            meta["attempts"][n - 1].setdefault("event", {})["video"] = vid
             self.store.write(run_id, meta)
-        return jresp(info)
+        return jresp(vid)
 
-    async def event_preset_workflow(self, req):
-        """효과 프리셋 → ComfyUI 워크플로 (Wan 2.2 5B, 텍스트 → 영상, 검은 배경) 내려받기."""
-        pid = req.query.get("id", "")
-        p = layermod.PRESET.get(pid)
-        if not p:
-            return jresp({"error": "없는 프리셋"}, 404)
-        g = workflow_ui.wan_event_workflow(p["prompt"], layermod.NEG_ELEMENT, variant="wan5_t2v", seconds=4)
-        return web.Response(text=json.dumps(g, ensure_ascii=False, indent=1), content_type="application/json",
-                            headers={"Content-Disposition": f'attachment; filename="effect_{pid}_wan5_t2v.json"'})
-
-    async def _to_viewer(self, src, name):
-        if not os.path.isfile(src):
-            return jresp({"error": "아직 만든 영상이 없어요."}, 400)
-        vdir = self.cfg.get("viewer_dir", "")
-        vdir = vdir if os.path.isabs(vdir) else os.path.normpath(os.path.join(HERE, vdir))
-        if not os.path.isdir(vdir):
-            return jresp({"error": f"뷰어 폴더가 없어요: {vdir}"}, 400)
-        await asyncio.to_thread(shutil.copyfile, src, os.path.join(vdir, name))
-        lst = os.path.join(vdir, "photos.json")
-        try:
-            with open(lst, encoding="utf-8") as fp:
-                data = json.load(fp)
-        except Exception:
-            data = {"files": []}
-        if name not in data["files"]:
-            data["files"].append(name)
-        with open(lst, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False, indent=4)
-        return jresp({"ok": True, "path": os.path.join(vdir, name), "count": len(data["files"])})
-
-    async def event_to_viewer(self, req):
-        """사건 영상 + 같은 결과의 8K JPG 를 함께 복사 → 뷰어가 '사진 → 사건 영상 → 사진' 으로 묶어 재생
-        (이름 규칙: <run>_aNN_8k.jpg + <run>_aNN_event.mp4)."""
+    async def repaste_photo(self, req):
+        """이미 만든 결과: 원본 사진을 원래 해상도로 AI 업스케일(ComfyUI)해서 같은 자리에 다시 붙임 → JPG 도 다시."""
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        att = self.store.read(run_id)["attempts"][n - 1]
-        f = next((x for x in att.get("files", []) if x.get("jpg")), None)
-        if f:
-            jpg = self.store.path(run_id, *f["jpg"].split("/")[3:])
-            if os.path.basename(jpg).startswith(f"{run_id}_a{n:02d}"):
-                await self._to_viewer(jpg, os.path.basename(jpg))
-        return await self._to_viewer(self.store.path(run_id, f"a{n:02d}", "event", "event_360.mp4"),
-                                     f"{run_id}_a{n:02d}_event.mp4")
-
-    async def motion_to_viewer(self, req):
-        """360 영상을 Unity 뷰어 StreamingAssets 에 복사 (빌드 때 목록에 자동 포함)."""
-        run_id, n = req.match_info["run_id"], int(req.match_info["n"])
-        src = self.store.path(run_id, f"a{n:02d}", "motion", "motion_360.mp4")
-        if not os.path.isfile(src):
-            return jresp({"error": "아직 만든 영상이 없어요."}, 400)
-        vdir = self.cfg.get("viewer_dir", "")
-        vdir = vdir if os.path.isabs(vdir) else os.path.normpath(os.path.join(HERE, vdir))
-        if not os.path.isdir(vdir):
-            return jresp({"error": f"뷰어 폴더가 없어요: {vdir}"}, 400)
-        name = f"{run_id}_a{n:02d}_motion.mp4"
-        await asyncio.to_thread(shutil.copyfile, src, os.path.join(vdir, name))
-        lst = os.path.join(vdir, "photos.json")
+        p = await req.json() if req.can_read_body else {}
+        meta = self.store.read(run_id)
+        att = meta["attempts"][n - 1]
+        if att.get("mode", "generate") != "generate" or not (att.get("placement") or {}).get("hfov"):
+            return jresp({"error": "사진을 놓아서 만든 결과에만 쓸 수 있어요."}, 400)
+        f = next((x for x in att.get("files", []) if x.get("final")), None)
+        if not f:
+            return jresp({"error": "결과 이미지가 없어요."}, 400)
+        bk = p.get("backend") or att.get("backend")
+        backend = self.backends.get(bk)
+        if backend is None:
+            return jresp({"error": f"'{bk}' 백엔드를 사용할 수 없어요."}, 400)
+        up = self.store.path(run_id, f"a{n:02d}", "photo_up.png")
         try:
-            with open(lst, encoding="utf-8") as fp:
-                data = json.load(fp)
-        except Exception:
-            data = {"files": []}
-        if name not in data["files"]:
-            data["files"].append(name)
-        with open(lst, "w", encoding="utf-8") as fp:
-            json.dump(data, fp, ensure_ascii=False, indent=4)
-        return jresp({"ok": True, "path": os.path.join(vdir, name), "count": len(data["files"])})
+            if not os.path.isfile(up):
+                name = await backend.upload(await asyncio.to_thread(self._source_png, run_id), f"{run_id}_a{n:02d}_photo.png")
+                g, out = workflow.build_photo_upscale(name, self.cfg["model_fallbacks"]["UpscaleModelLoader"][0],
+                                                      f"VR360/{run_id}_a{n:02d}")
+                pid = await self._submit_workflow(backend, g, self.store.path(run_id, f"a{n:02d}", "workflow_photo_up.json"))
+                t0 = time.time()
+                while True:
+                    st = await backend.status(pid, [out])
+                    if st["state"] == "done":
+                        break
+                    if st["state"] == "error" or time.time() - t0 > 600:
+                        raise RuntimeError(st.get("error") or "업스케일이 너무 오래 걸려요")
+                    await asyncio.sleep(2)
+                pf = next(x for x in st["files"] if x["node"] == out)
+                with open(up, "wb") as fp:
+                    fp.write(await backend.fetch(pf))
+            local = self.store.path(run_id, *f["url"].split("/")[3:])
+            mode, scale = await asyncio.to_thread(self._paste_photo_file, run_id, n, att, local)
+            if f.get("jpg"):
+                await asyncio.to_thread(erp.save_quest_jpg, local, self.store.path(run_id, *f["jpg"].split("/")[3:]),
+                                        self.cfg.get("jpg_quality", 95))
+        except Exception as e:
+            return jresp({"error": comfy.explain_comfy_error(str(e))}, 502)
+        async with self.locks.setdefault(run_id, asyncio.Lock()):
+            meta = self.store.read(run_id)
+            a = meta["attempts"][n - 1]
+            a["photo_pasted"] = mode
+            t = int(time.time())
+            for x in a.get("files", []):
+                x["v"] = t                                     # 화면 캐시 무효화용 (경로는 그대로)
+            self.store.write(run_id, meta)
+        return jresp({"ok": True, "mode": mode, "files": a["files"]})
 
     async def list_runs(self, req):
         out = []
@@ -1294,28 +958,24 @@ def create_app(cfg, keys) -> web.Application:
     app.add_routes([
         web.get("/", st.index),
         web.get("/api/config", st.config),
+        web.get("/api/models/check", st.models_check),
         web.post("/api/upload", st.upload),
         web.post("/api/analyze", st.analyze),
         web.post("/api/control", st.control),
         web.post("/api/generate", st.generate),
+        web.post("/api/run/{run_id}/import", st.import_result),
         web.get("/api/run/{run_id}/attempt/{n}", st.status),
         web.get("/api/run/{run_id}", st.get_run),
         web.post("/api/run/{run_id}/attempt/{n}/to_viewer", st.to_viewer),
         web.post("/api/run/{run_id}/attempt/{n}/motion", st.motion_plan),
         web.post("/api/run/{run_id}/attempt/{n}/event", st.event_plan),
         web.post("/api/run/{run_id}/attempt/{n}/event/update", st.event_update),
-        web.post("/api/run/{run_id}/attempt/{n}/event/compose", st.event_compose),
-        web.post("/api/run/{run_id}/attempt/{n}/event/to_viewer", st.event_to_viewer),
-        web.post("/api/run/{run_id}/attempt/{n}/event/layers", st.event_layer_add),
-        web.post("/api/run/{run_id}/attempt/{n}/event/layers/update", st.event_layer_update),
-        web.post("/api/run/{run_id}/attempt/{n}/event/preview", st.event_preview),
-        web.post("/api/run/{run_id}/attempt/{n}/event/compose_layers", st.event_compose_layers),
-        web.get("/api/event_preset_workflow", st.event_preset_workflow),
+        web.post("/api/run/{run_id}/attempt/{n}/repaste", st.repaste_photo),
+        web.get("/api/run/{run_id}/attempt/{n}/event/base", st.event_base),
+        web.post("/api/run/{run_id}/attempt/{n}/event/mask", st.event_mask),
+        web.post("/api/run/{run_id}/attempt/{n}/event/video", st.event_video_start),
+        web.get("/api/run/{run_id}/attempt/{n}/event/video", st.event_video_status),
         web.post("/api/run/{run_id}/attempt/{n}/motion/update", st.motion_update),
-        web.post("/api/run/{run_id}/attempt/{n}/motion/render", st.motion_render),
-        web.get("/api/run/{run_id}/attempt/{n}/motion/render", st.motion_render_status),
-        web.post("/api/run/{run_id}/attempt/{n}/motion/compose", st.motion_compose),
-        web.post("/api/run/{run_id}/attempt/{n}/motion/to_viewer", st.motion_to_viewer),
         web.get("/api/runs", st.list_runs),
         web.static("/runs", cfg["runs_dir"]),
         web.static("/static", os.path.join(HERE, "static")),

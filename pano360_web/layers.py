@@ -83,7 +83,8 @@ def clamp_layer(l: dict) -> dict:
     l["start"] = max(0.0, min(60.0, float(l.get("start", 0))))
     l["opacity"] = max(0.0, min(1.0, float(l.get("opacity", 1))))
     l["blend"] = l.get("blend") if l.get("blend") in ("normal", "screen") else "normal"
-    l["key"] = l.get("key") if l.get("key") in ("diff", "luma") else ("luma" if l.get("kind") == "element" else "diff")
+    keys = ("diff", "mask", "mask+diff") if l.get("kind") == "erp" else ("diff", "luma")
+    l["key"] = l.get("key") if l.get("key") in keys else ("luma" if l.get("kind") == "element" else "diff")
     l["enabled"] = bool(l.get("enabled", True))
     return l
 
@@ -103,10 +104,27 @@ def luma_alpha(frames: np.ndarray, lo=14.0, hi=110.0, max_w=1024) -> np.ndarray:
     return a * cinemagraph.edge_falloff(w, h, 0.05)[None]
 
 
+def paint_mask(path: str, w: int, h: int, feather=0.012) -> np.ndarray:
+    """웹에서 칠한 범위 PNG (흰색 = 움직임) → (h,w) 0~1, 가장자리 부드럽게, 극점은 0."""
+    import cv2
+    m = np.asarray(Image.open(path).convert("L").resize((w, h), Image.BILINEAR), np.float32) / 255.0
+    m = cv2.GaussianBlur(m, (0, 0), max(1.0, feather * w))
+    y = np.abs((np.arange(h) + 0.5) / h - 0.5) * 2
+    f = np.clip((0.94 - y) / 0.08, 0, 1)
+    return np.clip(m * (f * f * (3 - 2 * f))[:, None], 0, 1).astype(np.float32)
+
+
+def time_ramp(T: int, fps: float, sec=0.4) -> np.ndarray:
+    k = max(1, int(round(sec * fps)))
+    t = np.arange(T, dtype=np.float32)
+    r = np.minimum(np.clip(t / k, 0, 1), np.clip((T - 1 - t) / k, 0, 1))
+    return r * r * (3 - 2 * r)
+
+
 class Loaded:
     """한 레이어의 프레임·매트를 메모리에 올림 (미리보기·합성 공용)."""
 
-    def __init__(self, lay: dict, path: str, still_hi: np.ndarray, plate_view=None):
+    def __init__(self, lay: dict, path: str, still_hi: np.ndarray, plate_view=None, mask_path: str | None = None):
         import cv2
         self.l = lay
         frames, self.fps = eventmod.read_video(path)
@@ -119,6 +137,18 @@ class Loaded:
         self.off = np.zeros(3, np.float32)
         if lay["key"] == "luma":
             self.alpha = luma_alpha(frames)
+        elif lay["key"] in ("mask", "mask+diff") and mask_path:    # 웹에서 칠한 범위 (360 좌표)
+            aw = min(1024, w)
+            ah = max(8, int(round(h * aw / w)))
+            m = paint_mask(mask_path, aw, ah)
+            ramp = time_ramp(self.T, self.fps, 0.4)               # 처음·끝은 원본으로 부드럽게 (사진 ↔ 영상 전환)
+            if lay["key"] == "mask+diff":
+                self.alpha = eventmod.change_alpha(frames, border="poles") * m[None]
+            else:
+                self.alpha = np.repeat(m[None], self.T, 0) * ramp[:, None, None]
+            ref = cv2.resize(still_hi, (w, h), interpolation=cv2.INTER_AREA)
+            self.off = (ref.reshape(-1, 3).astype(np.float32).mean(0) -
+                        frames[0].reshape(-1, 3).astype(np.float32).mean(0)).astype(np.float32)
         else:
             self.alpha = eventmod.change_alpha(frames, border="poles" if lay["kind"] == "erp" else "all")
             if lay["kind"] == "erp":                          # 첫 프레임 색 → 원본
@@ -247,3 +277,22 @@ def compose(base_hi: np.ndarray, loaded: list, out_mp4: str, *, width=4096, crf=
         raise RuntimeError(f"ffmpeg 실패 (코드 {rc}): {err[-800:]}")
     return {"mode": "layers", "frames": T, "fps": round(fps, 2), "seconds": round(T / fps, 2), "size": [W, H],
             "peak_frame": peak, "layers": len(loaded)}
+
+
+def mux_audio(video_mp4: str, audio_src: str, start: float = 0.0) -> bool:
+    """합성 영상에 소리 붙이기 (레이어 시작 시각만큼 늦춰서). 실패하면 소리 없이 둠."""
+    import os
+    tmp = video_mp4 + ".a.mp4"
+    cmd = [cinemagraph.ffmpeg_exe(), "-y", "-loglevel", "error", "-i", video_mp4, "-itsoffset", f"{float(start):g}",
+           "-i", audio_src, "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+           "-shortest", "-movflags", "+faststart", tmp]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+        if r.returncode == 0 and os.path.getsize(tmp) > 0:
+            os.replace(tmp, video_mp4)
+            return True
+    except Exception:
+        pass
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    return False

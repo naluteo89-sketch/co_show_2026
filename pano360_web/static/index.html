@@ -22,8 +22,12 @@
       <div style="flex:1">
         <div id="srcinfo" class="muted"></div>
         <div id="erpbox" class="note hidden">
-          <b>이미 360(2:1) 이미지예요.</b> 다시 생성하지 않고 <b>Quest 3용 8K 화질 개선</b>만 해요
-          (이음새 패딩 → AI 업스케일 → 블렌드 → 디더).
+          <b>이미 360(2:1) 이미지예요.</b>
+          <div class="row" style="margin-top:8px;align-items:center">
+            <div style="flex:0 0 auto"><button class="primary" id="importbtn">생성 없이 이 이미지로 바로 다음 단계</button></div>
+            <div style="flex:1 1 240px;font-size:12px" class="muted" id="importstate">ComfyUI 없이 바로 5·6단계(움직일 곳·프롬프트·범위 칠하기·영상)로 가요. 이미 화질을 올린 360 이면 이걸 쓰세요.</div>
+          </div>
+          <div style="margin-top:10px">또는 <b>Quest 3용 8K 화질 개선</b>만 (이음새 패딩 → AI 업스케일 → 블렌드 → 디더, ComfyUI 필요):</div>
           <div class="row" style="margin-top:10px;align-items:center">
             <div style="flex:0 0 240px"><select id="backend2"></select></div>
             <div style="flex:0 0 auto"><button class="primary" id="enhance">8K 화질 개선 실행</button></div>
@@ -82,6 +86,11 @@
       <div><label>시드 (이음새)</label><input id="seed2" placeholder="비우면 랜덤"></div>
       <div><button class="primary" id="gen" style="width:100%">360 이미지 생성</button></div>
     </div>
+    <div class="row" style="margin-top:6px;align-items:center">
+      <div style="flex:0 0 auto"><button id="mcheck" title="고른 실행 위치에 필요한 모델(LoRA·업스케일러·LTX)이 다 있는지 확인">모델 점검</button></div>
+      <div class="muted" style="font-size:12px">Comfy Cloud 에 없는 LoRA 는 Cloud 의 Models → Import 에 링크를 넣어 가져와요.</div>
+    </div>
+    <div id="mcheckout" class="mcheck hidden"></div>
   </section>
 
   <section class="card hidden" id="jobcard">
@@ -94,9 +103,9 @@
   </section>
 
   <section class="card hidden" id="motioncard">
-    <h2><span class="step">5</span>영상화 · 움직일 곳과 프롬프트 <span class="muted" id="mtarget" style="font-weight:400"></span></h2>
-    <div class="note">화면 전체가 아니라 <b>일부만</b> 움직여요. LLM 이 결과 360 과 생성 프롬프트를 보고 물·구름·나뭇잎처럼
-      움직이면 살아나는 곳을 고르고, 영역마다 영상 모델(LTX-2.3 Cinemagraph)용 프롬프트를 만들어요. 영역 밖은 8K 정지 이미지 그대로예요.</div>
+    <h2><span class="step">5</span>움직일 곳(마스크) · 영상 프롬프트 <span class="muted" id="mtarget" style="font-weight:400"></span></h2>
+    <div class="note">LLM 이 결과 360 과 생성 프롬프트를 보고 물·구름·나뭇잎처럼 움직이면 살아나는 곳을 고르고,
+      영역(마스크)과 영상 모델(LTX 등)용 프롬프트를 만들어요. 영상 생성은 ComfyUI 에서 해요.</div>
     <label style="margin-top:10px">작업자 메모 (선택 · 움직이고 싶은 것, 피할 것)</label>
     <input id="mnote" placeholder="예: 연못 물결과 버드나무만. 구름은 움직이지 말 것">
     <div class="row" style="margin-top:10px;align-items:center">
@@ -138,34 +147,13 @@
         <div class="muted" id="mmeta" style="flex:1 1 200px;font-size:12px"></div>
       </div>
 
-      <div class="mrender hidden" id="mrendersec">
-        <b>360 영상 만들기</b>
-        <div class="muted" style="font-size:12px;margin-top:4px">① <b>영역 영상 만들기</b> — 영역마다 움직일 것 모양 마스크(SAM 3)와 짧은 영상(LTX-2.3 + Cinemagraph)을 클라우드에서 만들어요.<br>
-          ② <b>360 합성</b> — 마스크 안만 영상으로 바꾸고 나머지는 원본 정지 화면 그대로 360 에 합쳐 MP4 로 저장해요(이 PC 에서, 끝과 처음은 이어지게). 영역 영상을 다시 만들지 않고 몇 번이든 다시 합성할 수 있어요.</div>
-        <div class="row" style="margin-top:10px;align-items:flex-end">
-          <div><label>실행 위치</label><select id="mbackend"></select></div>
-          <div style="flex:0 0 120px"><label>길이 (초)</label><input id="mdur" type="number" min="1" max="8" step="1" value="1"></div>
-          <div style="flex:0 0 120px"><label>fps</label><select id="mfps"><option>24</option><option>30</option></select></div>
-          <div style="flex:0 0 auto"><button class="primary" id="mrender">① 영역 영상 만들기</button></div>
-          <div style="flex:0 0 auto"><button class="primary" id="mcompose" disabled>② 360 합성</button></div>
-        </div>
-        <div id="mrstate" class="muted" style="margin-top:8px"></div>
-        <div id="mrout" class="hidden" style="margin-top:10px">
-          <video id="mvideo" controls loop muted playsinline class="mvideo"></video>
-          <div class="row" style="margin-top:8px;align-items:center">
-            <a id="mdl" download style="flex:0 0 auto"><button class="primary">360 영상 다운로드 (MP4)</button></a>
-            <div style="flex:0 0 auto"><button id="mquest">Quest 뷰어에 추가</button></div>
-            <div id="minfo" class="muted" style="flex:1 1 240px;font-size:12px"></div>
-          </div>
-        </div>
-      </div>
     </div>
   </section>
 
   <section class="card hidden" id="eventcard">
-    <h2><span class="step">6</span>사건 영상 · 한 번 일어나는 연출 <span class="muted" id="etarget" style="font-weight:400"></span></h2>
-    <div class="note">잔잔하게 시작 → 물이 넘쳐 화면을 덮음 → 다시 잔잔하게 끝. 넓은 사건 화면(16:9)을 잘라 영상 모델(Wan 2.2)로 만들고,
-      결과 영상을 올리면 <b>원본에서 달라진 곳만</b> 360 위에 섞어요. 나머지는 8K 원본 그대로예요.</div>
+    <h2><span class="step">6</span>사건 연출 · 프롬프트와 움직일 범위 <span class="muted" id="etarget" style="font-weight:400"></span></h2>
+    <div class="note">잔잔하게 시작 → 물이 넘쳐 화면을 덮음 → 다시 잔잔하게 끝. LLM 이 연출과 영상 프롬프트를 만들고,
+      360 위에 움직일 범위를 칠해 마스크 PNG 로 받아요. 영상 생성은 ComfyUI(LTX) 에서 해요.</div>
     <label style="margin-top:10px">작업자 메모 (선택 · 원하는 연출)</label>
     <input id="enote" placeholder="예: 다리 아래로 폭포 물이 불어나 앞쪽 바위 위로 넘쳐 밀려왔다가 빠짐">
     <div class="row" style="margin-top:10px;align-items:center">
@@ -197,50 +185,60 @@
           <div class="row" style="margin-top:8px;align-items:center">
             <div style="flex:0 0 auto"><button class="primary" id="esave">수정 반영</button></div>
             <div style="flex:0 0 auto"><button id="ecp">Positive 복사</button></div>
-            <div style="flex:0 0 auto"><a id="ewf14" download><button>ComfyUI 워크플로 (Wan 14B · 24GB)</button></a></div>
-            <div style="flex:0 0 auto"><a id="ewf5" download><button>가벼운 버전 (Wan 5B)</button></a></div>
           </div>
           <div class="muted" id="emeta" style="font-size:12px;margin-top:6px"></div>
         </div>
       </div>
     </div>
+      <div class="mrender" id="eltx">
+        <b>움직일 범위 (마스크)</b>
+        <div class="muted" style="font-size:12px;margin-top:4px">360 그림 위에 움직일 곳을 칠하고 '범위 저장' → 마스크 PNG(2048×1024, 흰색 = 움직일 곳)를 받아 ComfyUI 에 쓰세요. 좌우 끝은 이어져요.</div>
+        <div class="mpaint" id="epaint" style="margin-top:8px">
+          <img id="embase" class="moverlay" alt="결과 360" draggable="false">
+          <canvas id="emask" width="1024" height="512"></canvas>
+        </div>
+        <div class="row" style="margin-top:6px;align-items:center">
+          <div style="flex:0 0 220px"><label style="display:inline">붓 크기 <input id="ebrush" type="range" min="6" max="160" value="40" style="width:120px;vertical-align:middle"></label></div>
+          <div style="flex:0 0 auto"><button id="eerase">지우개</button></div>
+          <div style="flex:0 0 auto"><button id="eclear">전체 지우기</button></div>
+          <div style="flex:0 0 auto"><button class="primary" id="emsave">범위 저장</button></div>
+          <div style="flex:0 0 auto"><a id="emdl" class="hidden" download><button>마스크 PNG 받기</button></a></div>
+          <div style="flex:1 1 200px" id="emstate" class="muted"></div>
+        </div>
+      </div>
+
       <div class="mrender">
-        <b>효과 레이어 → 360 에 섞기</b>
-        <div class="muted" style="font-size:12px;margin-top:4px">바탕은 <b>원본 360</b>(다시 그리지 않음). 효과 영상을 올려 고르고 섞어요.
-          <b>360 전체(2:1) 영상</b>·<b>사건 화면 영상</b>은 원본에서 달라진 곳만, <b>효과만 따로 만든 영상</b>(검은 배경 물보라·안개)은 밝은 곳만 섞여요.</div>
-        <div class="row" style="margin-top:10px;align-items:center">
-          <div style="flex:0 0 260px"><label>효과 프리셋 (효과만 따로 만들 때)</label><select id="epreset"></select></div>
-          <div style="flex:0 0 auto;align-self:flex-end"><button id="epcopy">프롬프트 복사</button></div>
-          <div style="flex:0 0 auto;align-self:flex-end"><a id="epwf" download><button>ComfyUI 워크플로 (Wan 5B · 텍스트→영상)</button></a></div>
+        <b>360 전체 영상 프롬프트</b> <span class="muted" style="font-size:12px">— LTX-2.3 + 360 LoRA 에 360 이미지를 그대로 넣을 때 ('사건 만들기'를 하면 그 내용이 들어가요)</span>
+        <label style="margin-top:8px">Positive</label>
+        <textarea id="eltxpos" style="min-height:100px"></textarea>
+        <label style="margin-top:8px">Negative</label>
+        <textarea id="eltxneg" style="min-height:60px"></textarea>
+        <div class="row" style="margin-top:8px;align-items:center">
+          <div style="flex:0 0 auto"><button class="primary" id="eltxcp">Positive 복사</button></div>
+          <div style="flex:0 0 auto"><button id="eltxcn">Negative 복사</button></div>
+          <div style="flex:1 1 200px" id="eltxstate" class="muted"></div>
         </div>
-        <div class="muted" id="epinfo" style="font-size:12px;margin-top:4px"></div>
-        <div class="row" style="margin-top:10px;align-items:center">
-          <div style="flex:1 1 260px"><input id="efile" type="file" accept="video/mp4,video/*"></div>
-          <div style="flex:0 0 auto"><button class="primary" id="eadd">레이어 추가</button></div>
-          <div style="flex:1 1 200px" id="ecstate" class="muted"></div>
+      </div>
+
+      <div class="mrender" id="evid">
+        <b>영상 만들기 — 노드 파일로</b>
+        <div class="muted" style="font-size:12px;margin-top:4px">화질 올린 이 360 + 위에서 칠한 범위 + 위 프롬프트를 노드 파일
+          (<code>video_nodes/retest.json</code>, config <code>video_template</code>)에 <b>값만 넣어</b> 그대로 실행해요.
+          노드가 사각 마스크(SolidMask·MaskComposite)면 칠한 범위를 감싸는 좌표를, 마스크 그림(LoadImage)이면 그림을 넣어요.
+          값 넣은 노드 파일도 받을 수 있어요(ComfyUI 에서 그대로 열림). 보통 5~15분.</div>
+        <div class="row" style="margin-top:10px;align-items:flex-end">
+          <div style="flex:0 0 220px"><label>실행 위치</label><select id="evbackend"></select></div>
+          <div style="flex:0 0 100px"><label>길이</label><select id="evsec"><option value="3">3초</option><option value="4" selected>4초</option><option value="5">5초</option><option value="6">6초</option></select></div>
+          <div style="flex:0 0 120px"><label>360 LoRA 세기</label><input id="evlora" type="number" min="0" max="1.2" step="0.1" value="0.6"></div>
+          <div style="flex:0 0 auto"><button class="primary" id="evgo">영상 만들기</button></div>
+          <div style="flex:1 1 200px" id="evstate" class="muted"></div>
         </div>
-        <div id="elist"></div>
-        <div class="row" style="margin-top:10px;align-items:center">
-          <div style="flex:0 0 auto"><button id="elsave">레이어 저장</button></div>
-          <div style="flex:0 0 auto"><button class="primary" id="eprev">매트 확인</button></div>
-          <div style="flex:0 0 auto"><button class="primary" id="ecompose">360 에 합치기 (4K)</button></div>
-        </div>
-        <div id="epreview" class="hidden" style="margin-top:10px">
-          <div class="row" style="align-items:center">
-            <div style="flex:1 1 300px"><input id="eslider" type="range" min="0" max="7" value="0" style="width:100%"></div>
-            <div style="flex:0 0 auto" id="etime" class="muted"></div>
-            <div style="flex:0 0 auto"><label style="display:inline"><input type="checkbox" id="ematteon" checked> 매트 보기</label></div>
-          </div>
-          <img id="ecomp" class="moverlay" alt="합성 미리보기">
-          <img id="ematte" class="moverlay" alt="매트 (레이어별 섞이는 곳)">
-          <div id="elegend" class="muted" style="font-size:12px;margin-top:6px"></div>
-        </div>
-        <div id="eout" class="hidden" style="margin-top:10px">
-          <video id="evideo" controls muted playsinline class="mvideo"></video>
+        <div id="evout" class="hidden" style="margin-top:10px">
+          <video id="evvideo" controls loop playsinline class="mvideo"></video>
           <div class="row" style="margin-top:8px;align-items:center">
-            <a id="edl" download style="flex:0 0 auto"><button class="primary">360 영상 다운로드 (MP4)</button></a>
-            <div style="flex:0 0 auto"><button id="equest">Quest 뷰어에 추가</button></div>
-            <div id="einfo" class="muted" style="flex:1 1 240px;font-size:12px"></div>
+            <a id="evdl" download style="flex:0 0 auto"><button class="primary">영상 받기 (물소리 포함)</button></a>
+            <a id="evdl2" download style="flex:0 0 auto"><button>무음 영상 받기</button></a>
+            <div id="evinfo" class="muted" style="flex:1 1 200px;font-size:12px"></div>
           </div>
         </div>
       </div>

@@ -221,78 +221,42 @@ class MotionTests(unittest.TestCase):
         self.assertLess(abs(c[..., 0].mean() - 200), 25)                     # 사진 자리 색은 원본 사진
         self.assertGreater(c.std(), 5)                                        # 결과의 디테일은 남음
 
-    def test_effect_layers_matte_and_blend(self):
-        import layers
-        self.assertEqual(layers.default_layer({"size": [2048, 1024]}, None, None)["kind"], "erp")
-        el = layers.default_layer({"size": [1280, 704]}, "spray", {"view": "x", "yaw": 10, "pitch": 0, "hfov": 120})
-        self.assertEqual((el["kind"], el["blend"], el["yaw"]), ("element", "screen", 10))
-        self.assertEqual(layers.clamp_layer({"opacity": 3, "blend": "x", "kind": "element"})["opacity"], 1.0)
-        fr = np.zeros((3, 72, 128, 3), np.uint8)
-        fr[1, 20:50, 40:90] = 240                                       # 검은 배경 위 밝은 효과
-        a = layers.luma_alpha(fr)
-        self.assertEqual(float(a[0].max()), 0.0)                         # 검정 = 투명
-        self.assertGreater(float(a[1, 35, 64]), 0.8)
-        cur = np.full((1, 3), 100.0, np.float32); src = np.full((1, 3), 200.0, np.float32)
-        self.assertEqual(int(layers._blend(cur, src, np.ones((1, 1), np.float32), "normal")[0, 0]), 200)
-        self.assertGreater(int(layers._blend(cur, src, np.ones((1, 1), np.float32), "screen")[0, 0]), 200)  # 밝게 더하기
-
-    def test_event_workflows_prompt_and_alpha(self):
-        import event, llm, workflow_ui
+    def test_event_prompt(self):
+        import llm, workflow
         e = llm.clamp_event({"yaw": 400, "pitch": 80, "hfov": 10, "calm_start": "calm", "event": "water surges",
                              "peak": "spray fills view", "calm_end": "settles", "keep": "bridge"})
         self.assertEqual((e["yaw"], e["pitch"], e["hfov"]), (40.0, 40.0, 60.0))
         pr = llm.event_prompts(e)
         self.assertIn("begins calm", pr["positive"]); self.assertIn("water surges", pr["positive"])
-        for v in ("wan14", "wan5"):
-            g = workflow_ui.wan_event_workflow(pr["positive"], pr["negative"], variant=v)
-            ids = {x["id"] for x in g["nodes"]}
-            self.assertTrue(all(l[1] in ids and l[3] in ids for l in g["links"]))
-        T, h, w = 9, 72, 128
-        fr = np.full((T, h, w, 3), 90, np.uint8)
-        fr[4, 20:60, 30:100] = 250                                      # 가운데 프레임만 크게 바뀜
-        a = event.change_alpha(fr, t_spread=1)
-        self.assertLess(float(a[0].max()), 0.05)                         # 시작은 원본 그대로
-        self.assertGreater(float(a[4, 40, 64]), 0.5)                     # 바뀐 곳은 생성 영상
-        self.assertEqual(float(a[4, 0, 0]), 0.0)                          # 화면 테두리는 0
+        self.assertIn("{event}", workflow.LTX360_POS)
 
-    def test_range_mode_graph_and_mask(self):
-        import cinemagraph
-        wf, _ = workflow.build_cinemagraph("a.png", positive="p", negative="n", width=1024, height=1408, duration=3,
-                                           fps=24, m={"cinemagraph_lora": "x"}, range_mask="r.png")
-        ids = set(wf)
-        refs = [v[0] for n in wf.values() for v in n["inputs"].values() if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str)]
-        self.assertTrue(all(r in ids for r in refs))
-        self.assertEqual(wf["14"]["inputs"]["video_latent"], ["42", 0])     # 1단계: 원본 잠재 + 범위 마스크
-        self.assertEqual(wf["25"]["inputs"]["video_latent"], ["43", 0])     # 2단계도 범위 고정
-        self.assertEqual(wf["38"]["inputs"]["amount"], (73 - 1) // 8)        # 첫 프레임 뺀 잠재 프레임 수
-        m, src = cinemagraph.range_mask((400, 300), None, "near")
-        self.assertEqual(src, "ellipse")
-        self.assertGreater(float(m[150, 200]), 0.9)                        # 가운데는 움직임
-        self.assertEqual(float(m[0, 0]), 0.0)                              # 테두리는 고정
+    def test_video_node_file_filled_with_web_values(self):
+        import workflow, json, os
+        here = os.path.join(os.path.dirname(__file__), "..", "video_nodes")
+        rt = json.load(open(os.path.join(here, "retest.json"), encoding="utf-8"))
+        ui, seed, info = workflow.fill_video_node(rt, image="p.jpg", positive="P", negative="N", seconds=5, rect=(300, 200, 900, 400))
+        g, saves = workflow.video_node_api(ui)
+        self.assertEqual(info["mode"], "rect")
+        self.assertEqual((g["1134"]["inputs"]["width"], g["1134"]["inputs"]["height"]), (900, 400))   # 칠한 범위 좌표
+        self.assertEqual((g["1136"]["inputs"]["x"], g["1136"]["inputs"]["y"]), (300, 200))
+        self.assertEqual((g["1131"]["inputs"]["image"], g["1128"]["inputs"]["text"]), ("p.jpg", "P"))
+        self.assertEqual(g["1108"]["inputs"]["length"], 121)                 # 계산 노드 → 숫자
+        self.assertTrue(saves[0]["audio"])
+        for nd in g.values():
+            for v in nd["inputs"].values():
+                if isinstance(v, list) and len(v) == 2 and isinstance(v[1], int):
+                    self.assertIn(v[0], g)
+        mi = json.load(open(os.path.join(here, "quest360_flood_mask_inpaint_4k.json"), encoding="utf-8"))
+        ui, _, info = workflow.fill_video_node(mi, image="p.jpg", positive="P", negative="N", mask_image="m.png")
+        self.assertEqual(info["mode"], "image")
+        self.assertEqual(workflow.video_node_api(ui)[0]["1162"]["inputs"]["image"], "m.png")
 
-    def test_influence_only_moves_targets_and_loops(self):
-        import influence, llm
-        rng = np.random.default_rng(0)
-        hi = (rng.random((256, 512, 3)) * 255).astype(np.uint8)          # 출력 256×128 의 2배
-        w, h = 128, 64
-        small = np.asarray(Image.fromarray(hi).resize((w, h)))
-        import cv2
-        gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
-        frames = np.stack([cv2.remap(small, gx + np.float32(1.5 * np.sin(t / 3)), gy, cv2.INTER_LINEAR,
-                                     borderMode=cv2.BORDER_WRAP) for t in range(13)])   # 화면 전체가 움직이는 가짜 영상
-        mask = np.zeros((h, w), np.float32); mask[30:45, 55:75] = 1
-        wgt = influence.influence_weight(w, h, [{"yaw": 0, "pitch": -10, "targets": [{"mask": mask, "range": "near", "strength": 1}]}])
-        self.assertEqual(float(wgt[:, :20].max()), 0.0)                  # 멀리는 0
-        fw = influence.FlowWarp(frames, wgt, 0, hi, 256, 128, fade=3)
-        outs = [fw.frame(t) for t in range(fw.T)]
-        still = fw.base_frame()
-        for o in outs:
-            self.assertTrue(np.array_equal(o[~fw.active], still[~fw.active]))   # 영향 밖은 원본 그대로
-        self.assertGreater(max(float(np.abs(o - still).max()) for o in outs), 1.0)
-        none = llm.clamp_region({"influence": [{"target": "x", "range": "none", "strength": 1}]})
-        self.assertFalse(llm.has_influence([none]))
-        self.assertIn("pool water", llm.global_motion_prompt([{"element": "falls", "motion": "flows",
-            "influence": [{"target": "pool water", "range": "near", "strength": 0.5}]}])["positive"])
+    def test_photo_upscale_ids_do_not_clash_with_photo_lock(self):
+        import workflow
+        api = {"31": {"class_type": "KSampler", "inputs": {"latent_image": ["951", 0]}},
+               "950": {"class_type": "LoadImageMask", "inputs": {}}, "951": {"class_type": "SetLatentNoiseMask", "inputs": {}}}
+        workflow.add_photo_upscale(api, "p.png", "x")
+        self.assertEqual(api["951"]["class_type"], "SetLatentNoiseMask")      # 사진 잠금 노드가 덮이지 않음
 
     def test_region_crop_mask_and_prompt(self):
         import erp, llm
@@ -316,33 +280,6 @@ class MotionTests(unittest.TestCase):
         self.assertIn("camera movement", pr["negative"])
         self.assertIn("Only the water moves", llm.motion_prompts({**r, "spread": "none"})["positive"])
 
-    def test_cinemagraph_graph_and_compose(self):
-        import cinemagraph, erp
-        g, seed = workflow.build_cinemagraph("r.png", positive="p", negative="n", width=1408, height=1024,
-                                             duration=1, fps=24, m={"cinemagraph_lora": "c.safetensors"})
-        self.assertEqual(g["11"]["inputs"]["length"], 25)                 # 8n+1
-        self.assertEqual((g["11"]["inputs"]["width"], g["11"]["inputs"]["height"]), (704, 512))
-        self.assertEqual(g["18"]["inputs"]["model"], ["5", 0])           # Cinemagraph LoRA 통과
-        for item in g.values():
-            for value in item["inputs"].values():
-                if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int):
-                    self.assertIn(value[0], g)
-        # 마스크 밖은 원본 정지 화면 그대로
-        w, h = 64, 48
-        still = np.full((h, w, 3), 100, np.float32)
-        frames = np.stack([np.full((h, w, 3), 100 + 10 * t, np.float32) for t in range(9)])
-        mask, src = cinemagraph.element_mask((w, h), None, feather_px=0)
-        self.assertEqual(src, "ellipse")
-        self.assertEqual(float(mask[0, 0]), 0.0)                          # 화면 가장자리는 절대 안 움직임
-        fr = cinemagraph.match_first_frame(frames, still, mask)
-        self.assertAlmostEqual(float(fr[0].mean()), 100.0, places=3)       # 첫 프레임 색 맞춤
-        self.assertEqual(len(cinemagraph.make_loop(fr, 3)), 6)
-        W, H = 256, 128
-        pj = cinemagraph.RegionProjector({"yaw": 0, "pitch": 0, "hfov": 60}, (w, h), mask, W, H)
-        base = np.zeros((H, W, 3), np.float32)
-        pj.paste(base, np.full((h, w, 3), 255, np.float32))
-        self.assertGreater(base[H // 2, W // 2, 0], 200)                   # 영역 가운데는 영상
-        self.assertEqual(float(base[H // 2, 0, 0]), 0.0)                   # 반대편은 그대로
 
 
 if __name__ == "__main__":

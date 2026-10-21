@@ -1,6 +1,6 @@
 // ---------- 6. 사건 영상: 한 번 일어나는 연출 (잔잔 → 물이 넘쳐 화면을 덮음 → 다시 잔잔)
-// LLM 이 사건 위치·내용·프롬프트를 정하고, 사건 화면(16:9) + ComfyUI 워크플로를 준다.
-// ComfyUI 에서 만든 MP4 를 올리면 원본에서 달라진 곳만 360 위에 섞어 MP4 로.
+// LLM 이 사건 위치·내용·프롬프트를 정하고 사건 화면(16:9)을 준다. 360 위에 움직일 범위(마스크)를 칠해 PNG 로.
+// 영상 생성·합성은 ComfyUI(LTX) 쪽에서 한다.
 
 const KEYS = ["yaw", "pitch", "hfov", "calm_start", "event", "peak", "calm_end", "keep"];
 const NUM = new Set(["yaw", "pitch", "hfov"]);
@@ -11,7 +11,6 @@ export function setupEvent({api, post, esc}) {
 
   function render() {
     $("ebody").classList.toggle("hidden", !(ev && ev.view));
-    showResult(ev && ev.result);
     if (!ev || !ev.view) return;
     $("esummary").innerHTML = `<b>${esc(ev.name_ko || "")}</b> · ${esc(ev.summary_ko || "")}` +
       (ev.risk_ko ? `<br><span class="muted">주의 · ${esc(ev.risk_ko)}</span>` : "");
@@ -20,25 +19,9 @@ export function setupEvent({api, post, esc}) {
     $("eoverlay").src = ev.overlay || "";
     KEYS.forEach(k => { $("e_" + k).value = ev[k] ?? ""; });
     $("e_pos").value = ev.positive || ""; $("e_neg").value = ev.negative || "";
-    const wf = ev.workflows || {};
-    $("ewf14").href = wf.wan14 || "#"; $("ewf14").setAttribute("download", `${runId}_event_wan14.json`);
-    $("ewf5").href = wf.wan5 || "#"; $("ewf5").setAttribute("download", `${runId}_event_wan5.json`);
     $("emeta").textContent = `${ev.model || ""} · ${ev.updated || ev.created || ""} · ${ev.seconds || 5}초 · 사건 화면 ${(ev.view_size || []).join("×")}`;
     edited = false;
-    showResult(ev.result);
-  }
-
-  function showResult(r) {
-    $("eout").classList.toggle("hidden", !r);
-    if (!r) return;
-    if (!$("evideo").src.includes(r.video)) { $("evideo").poster = r.preview || ""; $("evideo").src = r.video; }
-    $("edl").href = r.video;
-    $("einfo").innerHTML = esc(`${(r.size || []).join("×")} · ${r.fps}fps · ${r.seconds}초` +
-      (r.layers ? ` · 레이어 ${r.layers}개` : "") +
-      (r.peak_cover != null ? ` · 가장 많이 덮인 때 ${Math.round(r.peak_cover * 100)}% (시작 ${Math.round((r.start_cover || 0) * 100)}% · 끝 ${Math.round((r.end_cover || 0) * 100)}%)` : "") +
-      (r.max_shift_px != null ? ` · 흔들림 보정 최대 ${r.max_shift_px}px` : "")) +
-      (r.alpha ? ` · <a href="${r.alpha}" target="_blank">섞인 범위 보기</a>` : "") +
-      (r.preview ? ` · <a href="${r.preview}" target="_blank">절정 장면</a>` : "");
+    if (ev.ltx360) { $("eltxpos").value = ev.ltx360.positive || ""; $("eltxneg").value = ev.ltx360.negative || ""; }
   }
 
   function collect() {
@@ -55,7 +38,7 @@ export function setupEvent({api, post, esc}) {
     try {
       const model = $("mmodel") ? $("mmodel").value : undefined;
       ev = await post(`/api/run/${runId}/attempt/${n}/event`, {note: $("enote").value, seconds: +$("esec").value, model});
-      $("estate").textContent = `${ev.model} · 사건 화면과 워크플로를 만들었어요.`;
+      $("estate").textContent = `${ev.model} · 사건 화면과 프롬프트를 만들었어요.`;
       render();
     } catch (e) { $("estate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
     $("eplan").disabled = false;
@@ -63,7 +46,7 @@ export function setupEvent({api, post, esc}) {
 
   $("esave").onclick = async () => {
     if (!ev) return;
-    $("esave").disabled = true; $("estate").textContent = "사건 화면과 워크플로를 다시 만드는 중…";
+    $("esave").disabled = true; $("estate").textContent = "사건 화면과 프롬프트를 다시 만드는 중…";
     try {
       const body = {...collect(), seconds: +$("esec").value, prompt_edited: edited};
       if (edited) { body.positive = $("e_pos").value; body.negative = $("e_neg").value; }
@@ -79,152 +62,145 @@ export function setupEvent({api, post, esc}) {
     catch { $("estate").textContent = "복사하지 못했어요. 칸에서 직접 복사하세요."; }
   };
 
-  // ---- 효과 레이어: 바탕(원본 360) + 고른 효과 영상 섞기
-  const COLORS = ["#ff465a", "#46beff", "#ffc832", "#6ee682", "#c882ff"];
-  let presets = [], layers = [], pv = null;
-  const KIND = {erp: "360 전체 (달라진 곳)", view: "사건 화면 (달라진 곳)", element: "효과만 (밝은 곳)"};
-
-  function renderLayers() {
-    $("elist").innerHTML = layers.map((l, k) => `
-      <div class="elayer ${l.enabled ? "" : "off"}" data-id="${l.id}" style="--c:${COLORS[k % COLORS.length]}">
-        <div><img src="${esc(l.thumb || "")}" alt=""><div class="muted" style="font-size:11px">${esc((l.size || []).join("×"))} · ${l.fps}fps · ${l.frames}f</div></div>
-        <div>
-          <div class="row" style="align-items:center">
-            <div style="flex:0 0 auto"><label style="display:inline"><input type="checkbox" data-f="enabled" ${l.enabled ? "checked" : ""}> 사용</label></div>
-            <div style="flex:1 1 160px"><input data-f="name" value="${esc(l.name || "")}"></div>
-            <div style="flex:0 0 auto" class="muted">${esc(KIND[l.kind] || l.kind)}</div>
-            <div style="flex:0 0 auto"><button data-del title="빼기">×</button></div>
-          </div>
-          <div class="row" style="align-items:flex-end">
-            <div style="flex:0 0 90px"><label>시작 (초)</label><input data-f="start" type="number" step="0.1" min="0" value="${l.start}"></div>
-            <div style="flex:0 0 90px"><label>세기</label><input data-f="opacity" type="number" step="0.05" min="0" max="1" value="${l.opacity}"></div>
-            <div style="flex:0 0 130px"><label>섞는 방식</label><select data-f="blend">
-              <option value="normal"${l.blend === "normal" ? " selected" : ""}>덮기</option>
-              <option value="screen"${l.blend === "screen" ? " selected" : ""}>밝게 더하기</option></select></div>
-            ${l.kind === "erp" ? "" : `
-            <div style="flex:0 0 80px"><label>yaw</label><input data-f="yaw" type="number" step="1" value="${l.yaw}"></div>
-            <div style="flex:0 0 80px"><label>pitch</label><input data-f="pitch" type="number" step="1" value="${l.pitch}"></div>
-            <div style="flex:0 0 80px"><label>화각</label><input data-f="hfov" type="number" step="1" value="${l.hfov}"></div>`}
-          </div>
-        </div>
-      </div>`).join("") || `<div class="muted" style="margin-top:8px">아직 효과 레이어가 없어요. 영상을 골라 '레이어 추가'를 눌러 주세요.</div>`;
-    document.querySelectorAll("#elist .elayer").forEach(el => {
-      el.querySelector("[data-del]").onclick = () => { collectLayers(); layers = layers.filter(l => l.id !== +el.dataset.id); renderLayers(); };
-    });
+  // ---- 움직일 범위 칠하기 (360 그림 위, 흰색 = 영상)
+  const cv = $("emask"), cx = cv.getContext("2d");
+  let erasing = false, painting = false, maskDirty = false, last = null;
+  function paintAt(e) {
+    const b = cv.getBoundingClientRect();
+    const x = (e.clientX - b.left) / b.width * cv.width, y = (e.clientY - b.top) / b.height * cv.height;
+    const r = +$("ebrush").value / 2;
+    cx.globalCompositeOperation = erasing ? "destination-out" : "source-over";
+    cx.strokeStyle = cx.fillStyle = "rgb(255,40,70)"; cx.lineWidth = r * 2; cx.lineCap = "round";
+    if (last) { cx.beginPath(); cx.moveTo(last[0], last[1]); cx.lineTo(x, y); cx.stroke();
+      // 360 좌우가 이어지므로 가장자리에서 칠하면 반대쪽에도
+      if (x < r || x > cv.width - r) { const sh = x < r ? cv.width : -cv.width; cx.beginPath(); cx.moveTo(last[0] + sh, last[1]); cx.lineTo(x + sh, y); cx.stroke(); } }
+    else { cx.beginPath(); cx.arc(x, y, r, 0, Math.PI * 2); cx.fill(); }
+    last = [x, y]; maskDirty = true; $("emstate").textContent = "칠하는 중 — '범위 저장'을 눌러 주세요";
   }
-
-  function collectLayers() {
-    document.querySelectorAll("#elist .elayer").forEach(el => {
-      const l = layers.find(x => x.id === +el.dataset.id);
-      if (!l) return;
-      el.querySelectorAll("[data-f]").forEach(inp => {
-        const k = inp.dataset.f;
-        l[k] = inp.type === "checkbox" ? inp.checked : (inp.type === "number" ? Number(inp.value) : inp.value);
-      });
-    });
-    return layers;
+  $("epaint").addEventListener("pointerdown", e => { if (e.button !== 0) return; e.preventDefault();
+    $("epaint").setPointerCapture(e.pointerId); painting = true; last = null; paintAt(e); });
+  $("epaint").addEventListener("pointermove", e => { if (painting) paintAt(e); });
+  ["pointerup", "pointercancel"].forEach(t => $("epaint").addEventListener(t, () => { painting = false; last = null; }));
+  $("eerase").onclick = () => { erasing = !erasing; $("eerase").textContent = erasing ? "칠하기" : "지우개"; };
+  $("eclear").onclick = () => { cx.clearRect(0, 0, cv.width, cv.height); maskDirty = true; $("emstate").textContent = "지웠어요 — '범위 저장'을 눌러 주세요"; };
+  function maskPng() {                                       // 칠한 곳(빨강) → 흰색 PNG
+    const d = cx.getImageData(0, 0, cv.width, cv.height), t = document.createElement("canvas");
+    t.width = cv.width; t.height = cv.height;
+    const tx = t.getContext("2d"), o = tx.createImageData(cv.width, cv.height);
+    let any = 0;
+    for (let i = 0; i < d.data.length; i += 4) { const a = d.data[i + 3]; any += a > 0;
+      o.data[i] = o.data[i + 1] = o.data[i + 2] = a; o.data[i + 3] = 255; }
+    tx.putImageData(o, 0, 0);
+    return any ? t.toDataURL("image/png") : "";
   }
-
-  async function saveLayers() {
-    collectLayers();
-    const r = await post(`/api/run/${runId}/attempt/${n}/event/layers/update`, {layers});
-    layers = r.layers; renderLayers();
+  async function saveMask() {
+    const r = await post(`/api/run/${runId}/attempt/${n}/event/mask`, {png: maskPng()});
+    maskDirty = false;
+    $("emstate").textContent = r.mask ? `범위 저장 — 360 의 ${Math.round(r.cover * 1000) / 10}%` : "범위를 지웠어요";
+    setMaskLink(r.mask);
+    return r;
   }
-
-  function showPreview() {
-    if (!pv) { $("epreview").classList.add("hidden"); return; }
-    $("epreview").classList.remove("hidden");
-    $("eslider").max = String(pv.frames.length - 1);
-    const f = pv.frames[Math.min(+$("eslider").value, pv.frames.length - 1)];
-    $("ecomp").src = f.comp; $("ematte").src = f.matte;
-    $("ematte").classList.toggle("hidden", !$("ematteon").checked);
-    $("etime").textContent = `${f.t}초 / ${pv.duration}초`;
-    $("elegend").innerHTML = pv.layers.map((l, k) => {
-      const c = f.cover[k];
-      return `<span style="color:rgb(${l.color.join(",")})">■</span> ${esc(l.name || "")} — 이 시점 ${c == null ? "구간 밖" : Math.round(c * 1000) / 10 + "%"}` +
-        ` · 최대 ${Math.round(l.peak_cover * 1000) / 10}% · 시작 ${Math.round(l.start_cover * 1000) / 10}% · 끝 ${Math.round(l.end_cover * 1000) / 10}%`;
-    }).join("<br>") + `<br>매트 그림: 흐린 흑백 = 원본 그대로, 색 = 그 레이어가 섞이는 곳(진할수록 많이).`;
-  }
-  $("eslider").oninput = showPreview;
-  $("ematteon").onchange = showPreview;
-
-  $("epreset").onchange = () => {
-    const p = presets.find(x => x.id === $("epreset").value);
-    $("epinfo").textContent = p ? `${p.prompt}` : "I2V 영상(360 전체 또는 사건 화면)은 프리셋 없이 올리면 돼요.";
-    $("epwf").href = p ? `/api/event_preset_workflow?id=${p.id}` : "#";
-    $("epwf").style.visibility = p ? "visible" : "hidden"; $("epcopy").style.visibility = p ? "visible" : "hidden";
+  $("emsave").onclick = async () => {
+    try { await saveMask(); } catch (e) { $("emstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
-  $("epcopy").onclick = async () => {
-    const p = presets.find(x => x.id === $("epreset").value);
-    if (!p) return;
-    try { await navigator.clipboard.writeText(p.prompt); $("ecstate").textContent = "효과 프롬프트를 복사했어요."; } catch { }
-  };
-
-  $("eadd").onclick = async () => {
-    const f = $("efile").files[0];
-    if (!f) { $("ecstate").textContent = "ComfyUI 에서 만든 MP4 를 골라 주세요."; return; }
-    $("eadd").disabled = true; $("ecstate").textContent = "올리는 중…";
+  function setMaskLink(url) {
+    $("emdl").classList.toggle("hidden", !url);
+    if (url) { $("emdl").href = url; $("emdl").setAttribute("download", `${runId}_a${String(n).padStart(2, "0")}_mask.png`); }
+  }
+  async function loadBase() {
+    cx.clearRect(0, 0, cv.width, cv.height); maskDirty = false;
     try {
-      collectLayers();
-      const fd = new FormData(); fd.append("video", f); fd.append("preset", $("epreset").value || "");
-      const r = await api(`/api/run/${runId}/attempt/${n}/event/layers`, {method: "POST", body: fd});
-      layers = r.layers; renderLayers(); $("efile").value = "";
-      $("ecstate").textContent = "레이어를 추가했어요. '매트 확인'으로 섞이는 곳을 확인하세요.";
-    } catch (e) { $("ecstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-    $("eadd").disabled = false;
-  };
-  $("elsave").onclick = async () => {
-    try { await saveLayers(); $("ecstate").textContent = "레이어를 저장했어요."; }
-    catch (e) { $("ecstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  };
-  $("eprev").onclick = async () => {
-    $("eprev").disabled = true; $("ecstate").textContent = "레이어를 읽고 매트를 계산하는 중… (처음엔 10~60초)";
-    try {
-      await saveLayers();
-      pv = await post(`/api/run/${runId}/attempt/${n}/event/preview`, {count: 8});
-      $("eslider").value = String(Math.floor(pv.frames.length / 2));
-      $("ecstate").textContent = `미리보기 ${pv.frames.length}장 · 전체 ${pv.duration}초`;
-      showPreview();
-    } catch (e) { $("ecstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-    $("eprev").disabled = false;
-  };
-  $("ecompose").onclick = async () => {
-    $("ecompose").disabled = true; $("ecstate").textContent = "레이어를 360 에 합치는 중… (4K 5초 기준 1~3분)";
-    try {
-      await saveLayers();
-      const r = await post(`/api/run/${runId}/attempt/${n}/event/compose_layers`, {});
-      ev = {...(ev || {}), result: r};
-      $("ecstate").textContent = `완료 · ${r.finished || ""}`;
-      showResult(r);
-    } catch (e) { $("ecstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-    $("ecompose").disabled = false;
-  };
+      const b = await api(`/api/run/${runId}/attempt/${n}/event/base`);
+      $("embase").src = b.base;
+      setMaskLink(b.mask);
+      if (b.mask) {
+        const im = new Image();
+        im.onload = () => {                                    // 흰색 마스크 → 빨강 칠
+          const t = document.createElement("canvas"); t.width = cv.width; t.height = cv.height;
+          const tx = t.getContext("2d"); tx.drawImage(im, 0, 0, cv.width, cv.height);
+          const d = tx.getImageData(0, 0, cv.width, cv.height), o = cx.createImageData(cv.width, cv.height);
+          for (let i = 0; i < d.data.length; i += 4) { o.data[i] = 255; o.data[i + 1] = 40; o.data[i + 2] = 70; o.data[i + 3] = d.data[i]; }
+          cx.putImageData(o, 0, 0);
+        };
+        im.src = b.mask;
+        $("emstate").textContent = "저장된 범위를 불러왔어요";
+      } else $("emstate").textContent = "움직일 곳을 칠하고 '범위 저장'을 누르세요";
+    } catch (e) { $("emstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  }
 
-  $("equest").onclick = async () => {
-    try { const r = await post(`/api/run/${runId}/attempt/${n}/event/to_viewer`, {});
-          $("einfo").textContent = `Quest 뷰어에 8K 사진 + 사건 영상을 함께 추가했어요 (목록 ${r.count}개). 뷰어에서 사진 → 영상 → 사진으로 재생돼요 — Unity 에서 다시 빌드하세요`; }
-    catch (e) { $("einfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  // ---- 360 전체 영상 프롬프트 (LTX + 360 LoRA 용) 복사
+  let ltxDefaults = {};
+  const copyTo = async (txt, what) => {
+    try { await navigator.clipboard.writeText(txt); $("eltxstate").textContent = `${what} 를 복사했어요.`; }
+    catch { $("eltxstate").textContent = "복사하지 못했어요. 칸에서 직접 복사하세요."; }
+  };
+  $("eltxcp").onclick = () => copyTo($("eltxpos").value, "Positive");
+  $("eltxcn").onclick = () => copyTo($("eltxneg").value, "Negative");
+
+  // ---- 영상 만들기: 마스크 인페인팅 노드 (화질 올린 360 + 칠한 범위 + 프롬프트)
+  let vTimer = null;
+  function vidShow(v) {
+    clearTimeout(vTimer);
+    $("evout").classList.toggle("hidden", !(v && v.state === "done"));
+    if (!v || v.state === "none") { $("evstate").textContent = ""; $("evgo").disabled = false; return; }
+    const nodeLink = v.node_url ? ` · <a href="${v.node_url}" download="${runId}_video_node.json">값 넣은 노드 파일 받기</a>` : "";
+    const maskTxt = v.mask_mode === "rect" && v.rect ? ` · 마스크 사각형 x${v.rect[0]} y${v.rect[1]} ${v.rect[2]}×${v.rect[3]}` : v.mask_mode === "image" ? " · 마스크 그림" : "";
+    if (v.state === "running") {
+      const pr = v.progress || {};
+      $("evgo").disabled = true;
+      $("evstate").innerHTML = esc(`영상 만드는 중… ${pr.state === "running" ? (pr.node_title || pr.node || "") + (pr.max ? ` ${pr.value}/${pr.max}` : "") : "대기 중"}`) + esc(maskTxt) + nodeLink;
+      vTimer = setTimeout(vidPoll, 5000);
+      return;
+    }
+    $("evgo").disabled = false;
+    if (v.state === "error") { $("evstate").innerHTML = `<span class="err">${esc(v.error || "실패")}</span>` + nodeLink; return; }
+    $("evstate").innerHTML = esc(`완료 · ${v.finished || ""}${maskTxt}`) + nodeLink;
+    const main = v.audio_url || v.silent_url;
+    if (!$("evvideo").src.includes(main.split("?")[0])) $("evvideo").src = main;
+    const base = `${runId}_a${String(n).padStart(2, "0")}_flood_4k`;
+    $("evdl").classList.toggle("hidden", !v.audio_url); $("evdl").href = v.audio_url || "#"; $("evdl").setAttribute("download", base + "_audio.mp4");
+    $("evdl2").classList.toggle("hidden", !v.silent_url); $("evdl2").href = v.silent_url || "#"; $("evdl2").setAttribute("download", base + ".mp4");
+    $("evinfo").textContent = `${v.template || ""} · ${v.seconds}초 · ${v.fps || (v.out || {}).fps || 24}fps · seed ${v.seed}${v.lora_strength != null ? " · LoRA " + v.lora_strength : ""}`;
+  }
+  async function vidPoll() {
+    if (!runId) return;
+    try { vidShow(await api(`/api/run/${runId}/attempt/${n}/event/video`)); }
+    catch (e) { $("evstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; vTimer = setTimeout(vidPoll, 8000); }
+  }
+  $("evgo").onclick = async () => {
+    $("evgo").disabled = true; $("evstate").textContent = "범위·이미지를 올리고 작업을 보내는 중…";
+    try {
+      if (maskDirty) await saveMask();
+      vidShow(await post(`/api/run/${runId}/attempt/${n}/event/video`, {
+        backend: $("evbackend").value, seconds: +$("evsec").value, lora_strength: +$("evlora").value,
+        positive: $("eltxpos").value, negative: $("eltxneg").value}));
+    } catch (e) { $("evstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; $("evgo").disabled = false; }
   };
 
   return {
     show(id, att, cfg) {
       if (!att || att.state !== "done" || !(att.files || []).length) { this.hide(); return; }
       runId = id; n = att.n; ev = att.event || null;
-      if (cfg && cfg.event_presets && !presets.length) {
-        presets = cfg.event_presets;
-        $("epreset").innerHTML = `<option value="">— 프리셋 없음 (I2V 영상) —</option>` +
-          presets.map(p => `<option value="${esc(p.id)}">${esc(p.name_ko)} (${p.blend === "screen" ? "밝게 더하기" : "덮기"})</option>`).join("");
+      if (cfg && cfg.ltx360) ltxDefaults = cfg.ltx360;
+      const lp = (ev && ev.ltx360) || ltxDefaults;
+      $("eltxpos").value = lp.positive || ""; $("eltxneg").value = lp.negative || ""; $("eltxstate").textContent = "";
+      loadBase();
+      if (cfg && cfg.backends && !$("evbackend").options.length) {
+        $("evbackend").innerHTML = cfg.backends.map(b =>
+          `<option value="${esc(b.name)}">${esc(b.label)}${b.ok ? "" : " (연결 안 됨)"}</option>`).join("");
+        const pref = cfg.backends.find(b => b.name === cfg.default_backend && b.ok) || cfg.backends.find(b => b.ok);
+        if (pref) $("evbackend").value = pref.name;
       }
-      $("epreset").onchange();
-      layers = (ev && ev.layers) ? ev.layers.slice() : [];
-      pv = null; renderLayers(); showPreview();
+      const v = ev && ev.video;
+      if (v && v.seconds) $("evsec").value = String(v.seconds);
+      if (v && v.lora_strength != null) $("evlora").value = v.lora_strength;
+      vidShow(v);
       $("eventcard").classList.remove("hidden");
       $("etarget").textContent = `#${att.n} 결과로 만들어요`;
       if (ev && ev.seconds) $("esec").value = String(Math.round(ev.seconds));
       $("estate").textContent = ev ? "저장된 사건을 불러왔어요." : "";
-      $("ecstate").textContent = "";
       render();
     },
-    hide() { $("eventcard").classList.add("hidden"); ev = null; runId = null; },
+    hide() { $("eventcard").classList.add("hidden"); ev = null; runId = null; clearTimeout(vTimer); },
   };
 }

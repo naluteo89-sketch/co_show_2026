@@ -1,6 +1,6 @@
 // ---------- 영상화: 움직일 곳(일부만) + 영상 프롬프트 제작기
 // 결과 360 과 생성 프롬프트를 LLM 에 보내 '어디를 어떻게 움직일지' 받고, 영역별 Cinemagraph 프롬프트를 만든다.
-// 화면 전체가 아니라 영역만 움직인다 — 영역 밖은 8K 정지 이미지 그대로.
+// 영상은 ComfyUI/LTX 쪽에서 만든다 — 여기서는 영역(마스크)과 프롬프트만.
 
 const FIELDS = ["name_ko", "element", "yaw", "pitch", "hfov", "aspect", "motion", "speed", "strength", "keep_still",
                 "spread", "spread_strength"];
@@ -15,7 +15,7 @@ const COLORS = ["#ff5a6e", "#5ac8ff", "#ffc83c", "#78e68c", "#c88cff"];
 
 export function setupMotion({api, post, esc}) {
   const $ = id => document.getElementById(id);
-  let runId = null, n = null, plan = null, models = [], rtimer = null, pickTarget = null;
+  let runId = null, n = null, plan = null, models = [], pickTarget = null;
 
   function regionHtml(r, i) {
     const v = k => esc(r[k] ?? "");
@@ -103,7 +103,8 @@ export function setupMotion({api, post, esc}) {
     $("mltxneg").value = lt.negative || "";
     $("mltxnote").textContent = lt.positive ? "필요하면 고쳐서 복사하세요." : "예전 계획이에요 — '수정 반영'을 누르면 360 전체 프롬프트가 만들어져요.";
     const vm = plan.video_model || {};
-    $("mmeta").textContent = `${plan.model || ""} · ${plan.updated || plan.created || ""} · 영상 모델: ${vm.base || ""} + ${vm.lora || ""} (${(vm.train_size || []).join("×")}, ${vm.frames || ""}프레임)`;
+    $("mmeta").innerHTML = esc(`${plan.model || ""} · ${plan.updated || plan.created || ""}`) +
+      (plan.mask ? ` · <a href="${plan.mask}" download="motion_mask.png">영역 마스크 PNG 받기</a> (360 크기, 흰색 = 움직일 곳)` : "");
   }
 
   function collect() {
@@ -142,69 +143,6 @@ export function setupMotion({api, post, esc}) {
     } catch (e) { $("mstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
     $("msave").disabled = false;
   }
-
-  // ---- 360 영상 만들기 (영역 영상 → 마스크 합성 → 360 MP4)
-  function showRender(rd) {
-    clearTimeout(rtimer);
-    const st = rd && rd.state;
-    // 영역 영상이 다 만들어졌으면(clips/done, 또는 합성만 실패) 합성 버튼 사용 가능
-    $("mcompose").disabled = !(st === "clips" || st === "done" || (st === "error" && rd.compose_failed));
-    if (!rd || st === "none") { $("mrstate").textContent = ""; $("mrout").classList.add("hidden"); return; }
-    if (st === "error") {
-      $("mrstate").innerHTML = `<span class="err">${esc(rd.error)}</span>`;
-      $("mrender").disabled = false;
-      return;
-    }
-    if (st === "clips") {
-      $("mrender").disabled = false;
-      $("mrstate").innerHTML = `영역 영상 준비됨 · ${esc(rd.clips_finished || "")} — <b>② 360 합성</b>을 눌러 주세요.` +
-        (rd.compose_error ? ` <span class="err">(이전 합성 실패: ${esc(rd.compose_error)})</span>` : "");
-      return;
-    }
-    if (st === "done") {
-      $("mrender").disabled = false;
-      $("mrstate").textContent = `합성 완료 · ${rd.finished || ""}`;
-      $("mrout").classList.remove("hidden");
-      if (!$("mvideo").src.includes(rd.video)) { $("mvideo").poster = rd.preview || ""; $("mvideo").src = rd.video; }
-      $("mdl").href = rd.video;
-      const regs = (rd.regions || []).map(r => `영역 ${r.i}: ${r.frames}프레임 · 마스크 ${r.mask === "sam" ? "SAM" : "둥근 기본"}${r.mask_error ? " (SAM 없음)" : ""}`).join(" / ");
-      const inf = rd.influence || {};
-      const infTxt = inf.used ? ` · 영향 퍼짐 ${(inf.ratio * 100).toFixed(1)}% (최대 ${inf.max_shift_px}px, 대상 ${(inf.targets || []).filter(t => t.mask).map(t => t.target).join(", ")})`
-                              : (inf.note && inf.note !== "영향 퍼짐 없음" ? ` · 영향 퍼짐 안 됨: ${inf.note}` : "");
-      $("minfo").innerHTML = esc(`${rd.size ? rd.size.join("×") : ""} · ${rd.fps}fps · ${rd.seconds}초 반복 · 움직이는 면적 ${(rd.moving_ratio * 100).toFixed(1)}% · ${regs}${infTxt}`) +
-        (inf.weight ? ` · <a href="${inf.weight}" target="_blank">영향 범위 보기</a>` : "");
-      return;
-    }
-    $("mrender").disabled = true;
-    $("mrstate").textContent = rd.progress || "영상 작업 대기 중…";
-    rtimer = setTimeout(pollRender, 3000);
-  }
-  async function pollRender() {
-    if (!runId) return;
-    try { showRender(await api(`/api/run/${runId}/attempt/${n}/motion/render`)); }
-    catch (e) { $("mrstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; rtimer = setTimeout(pollRender, 5000); }
-  }
-  $("mrender").onclick = async () => {
-    if (!plan || !(plan.regions || []).length) { $("mrstate").textContent = "먼저 움직일 곳을 찾아 주세요."; return; }
-    $("mrender").disabled = true; $("mrout").classList.add("hidden"); $("mrstate").textContent = "영상 작업을 보내는 중…";
-    try {
-      const rd = await post(`/api/run/${runId}/attempt/${n}/motion/render`,
-        {backend: $("mbackend").value, duration: +$("mdur").value, fps: +$("mfps").value});
-      showRender(rd);
-    } catch (e) { $("mrstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; $("mrender").disabled = false; }
-  };
-  $("mcompose").onclick = async () => {
-    clearTimeout(rtimer);
-    $("mcompose").disabled = true; $("mrender").disabled = true;
-    $("mrstate").textContent = "영역 영상을 받아 360 에 합성하는 중… (4K 기준 1분 안팎)";
-    try { showRender(await post(`/api/run/${runId}/attempt/${n}/motion/compose`, {})); }
-    catch (e) { $("mrstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; $("mcompose").disabled = false; $("mrender").disabled = false; }
-  };
-  $("mquest").onclick = async () => {
-    try { const r = await post(`/api/run/${runId}/attempt/${n}/motion/to_viewer`, {});
-          $("minfo").textContent = `Quest 뷰어에 추가됨 (목록 ${r.count}개) — Unity 에서 다시 빌드하세요`; }
-    catch (e) { $("minfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  };
 
   $("mplan").onclick = runPlan;
   $("msave").onclick = save;
@@ -298,20 +236,12 @@ export function setupMotion({api, post, esc}) {
         models = cfg.openai_models;
         $("mmodel").innerHTML = models.map(m => `<option>${esc(m)}</option>`).join("");
         $("mmodel").value = cfg.openai_model;
-        $("mbackend").innerHTML = (cfg.backends || []).map(b =>
-          `<option value="${esc(b.name)}">${esc(b.label)}${b.ok ? "" : " (연결 안 됨)"}</option>`).join("");
-        const mc = cfg.motion || {};
-        $("mrendersec").classList.toggle("hidden", !mc.show_render);       // 영상 만들기·합성은 숨김 (config motion.show_render)
-        if (mc.backend) $("mbackend").value = mc.backend;
-        if (mc.duration) $("mdur").value = mc.duration;
-        if (mc.fps) $("mfps").value = mc.fps;
       }
       $("motioncard").classList.remove("hidden");
       $("mtarget").textContent = `#${att.n} 결과로 만들어요`;
       $("mstate").textContent = plan ? "저장된 영상화 계획을 불러왔어요." : "";
       render();
-      showRender(plan && plan.render);
     },
-    hide() { $("motioncard").classList.add("hidden"); plan = null; runId = null; clearTimeout(rtimer); },
+    hide() { $("motioncard").classList.add("hidden"); plan = null; runId = null; },
   };
 }

@@ -57,7 +57,8 @@ async function init() {
     $("backend").innerHTML = cfg.backends.map(b =>
       `<option value="${b.name}">${esc(b.label)}${b.ok ? "" : " (연결 안 됨)"}</option>`).join("");
     $("backend2").innerHTML = $("backend").innerHTML;
-    const first = cfg.backends.find(b => b.ok); if (first) { $("backend").value = first.name; $("backend2").value = first.name; }
+    const pref = cfg.backends.find(b => b.name === cfg.default_backend && b.ok) || cfg.backends.find(b => b.ok);
+    if (pref) { $("backend").value = pref.name; $("backend2").value = pref.name; }
     const g = cfg.gen_defaults || {};
     $("g_steps").value = g.steps ?? ""; $("g_cfg").value = g.cfg ?? ""; $("g_lora").value = g.lora_strength ?? ""; $("g_seam").value = g.seam_denoise ?? "";
   } catch (e) { $("chips").innerHTML = `<span class="chip bad">서버 연결 실패</span>`; }
@@ -174,6 +175,38 @@ function poleFix(fromN) {
     () => "발밑·하늘 보정 대기 중…", true);
 }
 
+async function modelCheck() {
+  const box = $("mcheckout"); box.classList.remove("hidden");
+  box.innerHTML = `<div class="muted">점검 중… (${esc($("backend").selectedOptions[0]?.textContent || "")})</div>`;
+  try {
+    const r = await api(`/api/models/check?backend=${encodeURIComponent($("backend").value)}`);
+    const mark = {ok: "✔", mapped: "✔", warn: "⚠", unknown: "?", missing: "✘"};
+    box.innerHTML = r.groups.map(g => `<div class="mgroup"><b>${esc(g.title)}</b>` + (g.error ? `<div class="bad">${esc(g.error)}</div>` :
+      g.items.map(i => `<div class="mi ${i.state}">${mark[i.state]} ${esc(i.class)} · ${esc(i.want)}` +
+        (i.state === "mapped" ? ` <span class="muted">→ ${esc(i.use)}</span>` : "") +
+        (i.state === "warn" ? ` → ${esc(i.use)}<br><span class="muted">${esc(i.note)}</span>` : "") +
+        (i.state === "missing" || i.state === "unknown" ? `<br><span class="muted">${i.note ? linkify(i.note) : "서버에 없음" + (i.near?.length ? " · 비슷한 파일: " + esc(i.near.join(", ")) : "")}</span>` : "") +
+        `</div>`).join("")) + `</div>`).join("");
+  } catch (e) { box.innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
+}
+const linkify = s => esc(s).replace(/(https?:\/\/\S+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+
+async function importAsResult() {
+  if (!run) return;
+  const id = run.run_id, version = viewVersion;
+  $("importbtn").disabled = true; $("importstate").textContent = "등록 중…";
+  try {
+    const att = await post(`/api/run/${id}/import`, {});
+    if (!current(version)) return;
+    $("importstate").textContent = `#${att.n} 결과로 등록했어요 — 아래 5·6단계를 쓰세요.`;
+    $("jobcard").classList.remove("hidden"); $("bar").style.width = "100%";
+    $("jobtext").textContent = `#${att.n} 가져온 360 이미지 · ${(att.size || []).join("×")}`;
+    showResult(att); loadAttempts(); loadRuns();
+    $("jobcard").scrollIntoView({behavior: "smooth"});
+  } catch (e) { if (current(version)) $("importstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  $("importbtn").disabled = false;
+}
+
 function enhance() {
   return submitJob({backend: $("backend2").value, mode: "enhance"}, () => "화질 개선 대기 중…");
 }
@@ -198,18 +231,33 @@ function showResult(att) {
   // 결과는 최종 360 한 장만 보여줌 (예전 시도에 남은 2K 등 중간 파일은 숨김)
   const f = finalFile(att.files);
   const shown = f ? [f] : [];
+  const vq = x => x.v ? `?v=${x.v}` : "";
   $("results").innerHTML = shown.map(x => `<div>
     <div class="row" style="margin-bottom:8px">
-      <a href="${x.jpg || x.url}" download style="flex:0 0 auto"><button class="primary">360 이미지 다운로드 (JPG)</button></a>
-      <a href="${x.url}" download style="flex:0 0 auto"><button>원본 PNG</button></a>
+      <a href="${(x.jpg || x.url) + vq(x)}" download style="flex:0 0 auto"><button class="primary">360 이미지 다운로드 (JPG)</button></a>
+      <a href="${x.url + vq(x)}" download style="flex:0 0 auto"><button>원본 PNG</button></a>
       ${x.jpg ? `<a href="#" class="toviewer" data-n="${att.n}" style="flex:0 0 auto"><button>Quest 뷰어에 추가</button></a> <span class="tvstate muted"></span>` : ""}
     </div>
-    <a href="${x.jpg || x.url}" target="_blank"><img src="${x.jpg || x.url}" alt="" class="pano"></a>
+    <a href="${(x.jpg || x.url) + vq(x)}" target="_blank"><img src="${(x.jpg || x.url) + vq(x)}" alt="" class="pano"></a>
     <div class="muted dims" style="font-size:12px"></div></div>`).join("");
   const im = $("results").querySelector("img.pano");
   if (im) im.onload = () => { im.parentElement.nextElementSibling.textContent =
       `360 결과 ${im.naturalWidth} × ${im.naturalHeight}px` +
       " · 위 360 뷰어 화면은 미리보기라 저장해도 작은 화면 크기로만 저장돼요"; };
+  if (f && att.mode !== "pole" && att.mode !== "enhance" && att.mode !== "import" && !String(att.photo_pasted || "").startsWith("upscaled"))
+    $("results").insertAdjacentHTML("beforeend",
+      `<div class="note">원본 사진 자리가 주변보다 흐리면 →
+         <button id="repastebtn" data-n="${att.n}">원본 자리 화질 맞추기</button>
+         <span class="muted" style="font-size:12px" id="repastestate">원본 사진을 원래 해상도로 AI 업스케일해서 같은 자리에 다시 붙여요 (1~2분, 이 결과를 고침)</span></div>`);
+  if ($("repastebtn")) $("repastebtn").onclick = async () => {
+    const b = $("repastebtn"); b.disabled = true; $("repastestate").textContent = "원본 사진 업스케일 중…";
+    try {
+      const r = await post(`/api/run/${run.run_id}/attempt/${b.dataset.n}/repaste`, {});
+      $("repastestate").textContent = `완료 (${r.mode})`;
+      showResult({...att, files: r.files, photo_pasted: r.mode});
+      const nf = finalFile(r.files); if (nf) viewer.load((nf.jpg || nf.url) + (nf.v ? `?v=${nf.v}` : ""));
+    } catch (e) { $("repastestate").innerHTML = `<span class="err">${esc(e.message)}</span>`; b.disabled = false; }
+  };
   if (f) $("results").insertAdjacentHTML("beforeend",
     `<div class="note">발밑이 뭉개지거나 하늘 꼭대기가 비어 보이면 →
        <button id="polebtn" data-n="${att.n}">발밑·하늘 보정 + 8K</button>
@@ -233,8 +281,9 @@ async function loadAttempts() {
   if (!current(version)) return;
   const fmtSet = s => s && Object.keys(s).length ? ` · steps ${s.steps ?? "-"} · CFG ${s.cfg ?? "-"} · LoRA ${s.lora_strength ?? "-"} · seam ${s.seam_denoise ?? "-"}` : "";
   $("attempts").innerHTML = m.attempts.slice().reverse().map(a => {
-    const enh = a.mode === "enhance" || a.mode === "pole";
-    const head = enh ? `#${a.n} · ${a.backend} · ${a.state} · ${a.mode === "pole" ? `발밑·하늘 보정${a.from_attempt ? ` (#${a.from_attempt} 결과)` : ""} + 8K` : "8K 화질 개선"} · ${a.created}`
+    const enh = a.mode === "enhance" || a.mode === "pole" || a.mode === "import";
+    const head = a.mode === "import" ? `#${a.n} · 가져온 360 이미지 (생성 없음) · ${a.created}`
+               : enh ? `#${a.n} · ${a.backend} · ${a.state} · ${a.mode === "pole" ? `발밑·하늘 보정${a.from_attempt ? ` (#${a.from_attempt} 결과)` : ""} + 8K` : "8K 화질 개선"} · ${a.created}`
                      : `#${a.n} · ${a.backend} · ${a.state} · seed ${a.seeds.seed1}/${a.seeds.seed2}${fmtSet(a.settings)} · ${a.created}`;
     return `<details class="attempt"><summary>${esc(head)}</summary>
       ${[finalFile(a.files)].filter(Boolean).map(f => `<a href="#" data-url="${f.jpg || f.url}" class="show" style="color:var(--acc);margin-right:10px">360 보기</a>`).join("")}
@@ -293,5 +342,7 @@ $("analyze").onclick = analyze;
 ["yaw", "pitch", "hfov", "vfov"].forEach(id => $(id).addEventListener("input", refreshControl));
 $("gen").onclick = generate;
 $("enhance").onclick = enhance;
+$("importbtn").onclick = importAsResult;
+$("mcheck").onclick = modelCheck;
 $("polebtn2").onclick = () => poleFix(null);
 init();

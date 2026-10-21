@@ -67,4 +67,16 @@
   .elayer .row{gap:6px}
   .elayer input[type=number]{width:auto}
   .elayer.off{opacity:.5}
+  #epaint{position:relative;cursor:crosshair;user-select:none;touch-action:none}
+  #epaint .moverlay{pointer-events:none}
+  #emask{position:absolute;left:0;top:10px;width:100%;height:calc(100% - 10px);opacity:.5;pointer-events:none}
 
+
+.mcheck { margin-top: 8px; padding: 10px 12px; border: 1px solid #2a3340; border-radius: 8px; font-size: 12.5px; }
+.mcheck .mgroup { margin-bottom: 8px; }
+.mcheck .mi { margin: 3px 0 0 6px; word-break: break-all; }
+.mcheck .mi.missing { color: #ff8a8a; }
+.mcheck .mi.warn, .mcheck .mi.unknown { color: #f5c26b; }
+.mcheck .mi.ok, .mcheck .mi.mapped { color: #8fd19e; }
+.mcheck a { color: #7fb8ff; }
+.mcheck .bad { color: #ff8a8a; }

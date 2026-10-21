@@ -11,14 +11,12 @@
     "local": {"label": "내 PC ComfyUI", "type": "comfyui", "url": "http://127.0.0.1:8188"},
     "comfycloud": {"label": "Comfy Cloud (공식)", "type": "comfy_cloud", "url": "https://cloud.comfy.org"}
   },
-  "motion": {"backend": "comfycloud", "duration": 1, "fps": 24, "video_width": 4096, "crf": 18, "loop_fade": 6,
-             "sam": true, "sam_ckpt": "sam3.1_multiplex_fp16.safetensors", "sam_threshold": 0.4, "mask_feather": 14,
-             "ckpt": "ltx-2.3-22b-dev-fp8.safetensors", "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
-             "distilled_lora": "ltx-2.3-22b-distilled-lora-384.safetensors",
-             "cinemagraph_lora": "ltx-2.3-22b-lora-cinemagraph-0.9.safetensors",
-             "upscaler": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors", "img_compression": 18,
-             "show_render": false, "codec": "hevc", "event_width": 4096, "event_crf": 17, "range_mode": true, "stabilize": true, "influence": true, "global_width": 1536, "global_lora_strength": 1.0, "influence_max_shift_deg": 4.0},
+  "default_backend": "comfycloud",
+  "model_sources": {
+    "flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors": "https://huggingface.co/nomadoor/flux-2-klein-4B-360-erp-outpaint-lora/blob/main/flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors"
+  },
   "workflow": "../test_quest3.json",
+  "video_template": "video_nodes/retest.json",
   "final_tag": "8k",
   "jpg_quality": 95,
   "viewer_dir": "../Pano360Viewer/Assets/StreamingAssets/Pano360",
@@ -32,7 +30,7 @@
   "distilled_profile": {"steps": 4, "partial_steps": 8, "cfg": 1.0},
   "ultrasharp_blend": 0.45,
   "tone_match": 0.6,
-  "keep_photo": {"enabled": true, "mask_feather": 0.04, "paste_feather": 0.05, "paste_mode": "auto", "detail_strength": 0.9},
+  "keep_photo": {"enabled": true, "mask_feather": 0.04, "paste_feather": 0.05, "paste_mode": "auto", "detail_strength": 0.9, "upscale_photo": true},
   "runs_dir": "runs",
   "erp_size": [2048, 1024],
   "default_yaw": -20,

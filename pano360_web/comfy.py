@@ -37,6 +37,7 @@ class _Base:
         self._ws_task = None
         self._options = None    # 서버의 노드별 선택지 (모델 파일 목록 등) 캐시
         self.fallbacks = {}     # {노드 클래스: [대체 파일명, ...]} — 원래 파일이 없을 때 순서대로 시도
+        self.sources = {}       # {파일명: 받을 곳 링크} — 없을 때 안내
 
     # ---- websocket: 진행률 + (클라우드) 결과 수신
     def ensure_ws(self):
@@ -170,6 +171,63 @@ class _Base:
     def _base(name):
         return name.replace("\\", "/").rsplit("/", 1)[-1].lower()
 
+    def _match(self, cls, val, choices):
+        """서버 목록에서 val 에 해당하는 파일 하나 (없으면 None).
+        Comfy Cloud 에 직접 가져온 모델은 '올린사람__저장소__파일명' 이름이라 계열 비교로 찾음."""
+        hits = [c for c in choices if self._base(c) == self._base(val)]
+        if not hits:                        # 구분자·대소문자만 다른 경우 (flux-2-klein ↔ flux2_klein)
+            hits = [c for c in choices if self._norm(c) == self._norm(val)]
+        if not hits:                        # 같은 모델 계열의 다른 파일명 (fp8/bf16/base, 가져온 모델 이름 등)
+            hits = self._family_match(val, choices)
+        if not hits:                        # 대체 후보 (config.json "model_fallbacks")
+            for alt in self.fallbacks.get(cls, []):
+                hits = [c for c in choices if self._base(c) == self._base(alt)]
+                if hits:
+                    break
+        return hits[0] if hits else None
+
+    def _near(self, val, choices):
+        keys = [t for t in self._tokens(val) if t not in self._VARIANT and len(t) > 2] or ["klein", "flux"]
+        return [c for c in choices if any(t in self._norm(c) for t in keys)][:10]
+
+    def _import_hint(self, val):
+        """config.json "model_sources" 에 받을 곳이 있으면 안내 (Comfy Cloud 는 링크로 가져오기)."""
+        src = self.sources.get(val) or next((u for k, u in self.sources.items() if self._norm(k) == self._norm(val)), None)
+        if not src:
+            return ""
+        if isinstance(self, ComfyCloud):
+            return (f"\n    → Comfy Cloud 왼쪽 Models → Import 에 이 링크를 붙여 넣고 폴더를 고른 뒤 가져오세요 "
+                    f"(Creator 이상 요금제):\n      {src}")
+        return f"\n    → 받을 곳: {src} (ComfyUI models 폴더에 넣은 뒤 다시 실행)"
+
+    async def check_models(self, wf: dict) -> list:
+        """그래프의 모델 파일이 이 서버에 있는지 점검 (그래프는 바꾸지 않음)."""
+        opts = await self._load_options(refresh=True)
+        out = []
+        for nid, node in wf.items():
+            if node["class_type"].startswith("LoadImage"):
+                continue
+            for name, val in node["inputs"].items():
+                choices = opts.get((node["class_type"], name))
+                if not choices or not isinstance(val, str) or "." not in val:
+                    continue
+                r = {"node": nid, "class": node["class_type"], "want": val}
+                if val in choices:
+                    r.update(state="ok", use=val)
+                else:
+                    hit = self._match(node["class_type"], val, choices)
+                    if hit:
+                        base_lost = node["class_type"] == "UNETLoader" and "base" in self._tokens(val) and "base" not in self._tokens(hit)
+                        r.update(state="warn" if base_lost else "mapped", use=hit,
+                                 note="증류 모델로 대체 → 품질 낮음. base 모델을 가져오면 좋아요." if base_lost else "")
+                    else:
+                        hint = self._import_hint(val).strip().lstrip("→").strip()
+                        r.update(state="unknown", use=val, near=self._near(val, choices),
+                                 note="공용 목록에는 없어요. 내 계정에 가져온 모델이면 그대로 실행돼요 (정말 없으면 실행 때 서버가 알려줘요)."
+                                      + (" " + hint if hint else ""))
+                out.append(r)
+        return out
+
     async def resolve_models(self, wf: dict) -> list:
         """wf 를 제자리에서 고치고, 바꾼 내역 [(노드, 입력, 원래값, 바뀐값)] 반환."""
         try:
@@ -185,24 +243,15 @@ class _Base:
                 choices = opts.get((node["class_type"], name))
                 if not choices or not isinstance(val, str) or val in choices:
                     continue
-                hits = [c for c in choices if self._base(c) == self._base(val)]
-                if not hits:                        # 구분자·대소문자만 다른 경우 (flux-2-klein ↔ flux2_klein)
-                    hits = [c for c in choices if self._norm(c) == self._norm(val)]
-                if not hits:                        # 같은 모델 계열의 다른 파일명 (fp8/bf16/base 등만 다른 경우)
-                    hits = self._family_match(val, choices)
-                if not hits:                        # 대체 후보 (config.json "model_fallbacks")
-                    for alt in self.fallbacks.get(node["class_type"], []):
-                        hits = [c for c in choices if self._base(c) == self._base(alt)]
-                        if hits:
-                            break
-                if hits:
-                    node["inputs"][name] = hits[0]
-                    changed.append((nid, name, val, hits[0]))
+                hit = self._match(node["class_type"], val, choices)
+                if hit:
+                    node["inputs"][name] = hit
+                    changed.append((nid, name, val, hit))
                 elif "." in val:    # 파일처럼 보이는데 서버에 없음
-                    keys = [t for t in self._tokens(val) if t not in self._VARIANT and len(t) > 2] or ["klein", "flux"]
-                    near = [c for c in choices if any(t in self._norm(c) for t in keys)][:10]
+                    near = self._near(val, choices)
                     missing.append(f"노드 {nid} {node['class_type']}.{name}: '{val}'"
-                                   + (f"\n    서버에 있는 비슷한 파일: {near}" if near else f"\n    서버 목록 일부: {choices[:8]}"))
+                                   + (f"\n    서버에 있는 비슷한 파일: {near}" if near else f"\n    서버 목록 일부: {choices[:8]}")
+                                   + self._import_hint(val))
         for c in changed:
             print(f"[api] 모델 이름 맞춤 · 노드 {c[0]} {c[1]}: {c[2]} → {c[3]}")
         if missing and not getattr(self, "_retried", False):   # 서버에 파일을 새로 넣었을 수 있으니 한 번 새로 읽기
@@ -211,8 +260,8 @@ class _Base:
                 return await self.resolve_models(wf)
             finally:
                 self._retried = False
-        if missing:
-            raise RuntimeError("서버에 없는 파일이 있어요:\n" + "\n".join(missing))
+        if missing:   # 공용 목록(object_info)에 없을 뿐 내 계정에 가져온 모델일 수 있음 → 막지 않고 그대로 보냄
+            print("[api] ⚠ 서버 모델 목록에 없는 파일 (그대로 보냄 — 정말 없으면 서버가 실행 때 알려줘요):\n" + "\n".join(missing))
         self._apply_distilled_profile(wf, changed)
         self._soften_ultrasharp(wf)
         return changed
@@ -387,7 +436,8 @@ class ComfyCloud(_Base):
 
 
 def make_backends(session, backends_cfg: dict, keys: dict, fallbacks: dict | None = None,
-                  distilled_profile: dict | None = None, ultrasharp_blend: float | None = None) -> dict:
+                  distilled_profile: dict | None = None, ultrasharp_blend: float | None = None,
+                  sources: dict | None = None) -> dict:
     """config.json "backends" → {이름: ComfyUI | ComfyCloud}"""
     out = {}
     for name, b in backends_cfg.items():
@@ -400,6 +450,7 @@ def make_backends(session, backends_cfg: dict, keys: dict, fallbacks: dict | Non
             out[name] = ComfyUI(session, b["url"])
         out[name].label = name
         out[name].fallbacks = fallbacks or {}
+        out[name].sources = sources or {}
         out[name].distilled_profile = distilled_profile
         out[name].ultrasharp_blend = ultrasharp_blend
     return out
