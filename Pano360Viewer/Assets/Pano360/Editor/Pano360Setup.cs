@@ -23,7 +23,7 @@ namespace Pano360.EditorTools
     {
         public const string ScenePath = "Assets/Scenes/Main.unity";
         const string BaseMarker = "ProjectSettings/Pano360_BaseSetup.done";
-        static readonly string[] RequiredPackages = { "com.unity.xr.openxr", "com.unity.xr.hands" };
+        static readonly string[] RequiredPackages = { "com.unity.xr.openxr", "com.unity.xr.hands", "com.unity.modules.video" };   // video: 360 영상 재생
 
         static AddAndRemoveRequest request;
 

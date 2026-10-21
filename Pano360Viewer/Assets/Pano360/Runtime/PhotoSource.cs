@@ -12,6 +12,7 @@ namespace Pano360
         public string name;
         public string url;
         public bool stereo; // Top-Bottom 스테레오 여부
+        public bool video;  // 360 영상 (mp4 등) — VideoPlayer 로 재생
     }
 
     [Serializable]
@@ -21,7 +22,7 @@ namespace Pano360
     }
 
     /// <summary>
-    /// 360 사진 목록을 모읍니다.
+    /// 360 사진·영상 목록을 모읍니다.
     ///  1) 앱에 포함된 사진: Assets/StreamingAssets/Pano360/  (빌드 시 photos.json 목록 자동 생성)
     ///  2) 기기 폴더 사진:  Android/data/&lt;패키지명&gt;/files/Photos/  (USB로 복사)
     /// </summary>
@@ -31,6 +32,7 @@ namespace Pano360
         public const string ListFileName = "photos.json";
 
         static readonly string[] Extensions = { ".jpg", ".jpeg", ".png" };
+        static readonly string[] VideoExtensions = { ".mp4", ".m4v", ".mov", ".webm" };
 
         public static string DeviceFolder => Path.Combine(Application.persistentDataPath, "Photos");
 
@@ -39,6 +41,14 @@ namespace Pano360
             var ext = Path.GetExtension(path).ToLowerInvariant();
             return Array.IndexOf(Extensions, ext) >= 0;
         }
+
+        public static bool IsVideo(string path)
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            return Array.IndexOf(VideoExtensions, ext) >= 0;
+        }
+
+        public static bool IsMedia(string path) => IsImage(path) || IsVideo(path);
 
         /// 파일명에 _TB, _OU, _3D 가 들어가면 위/아래 스테레오로 처리
         public static bool IsStereoName(string fileName)
@@ -68,8 +78,10 @@ namespace Pano360
                                 bundled.Add(new PhotoEntry
                                 {
                                     name = f,
-                                    url = baseDir + "/" + Uri.EscapeDataString(f),
-                                    stereo = IsStereoName(f)
+                                    // VideoPlayer 는 StreamingAssets 경로를 그대로 받음 (이스케이프하면 못 찾음)
+                                    url = IsVideo(f) ? baseDir + "/" + f : baseDir + "/" + Uri.EscapeDataString(f),
+                                    stereo = IsStereoName(f),
+                                    video = IsVideo(f)
                                 });
                     }
                     else
@@ -99,7 +111,7 @@ namespace Pano360
             local.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
             result.AddRange(local);
 
-            Debug.Log($"[Pano360] 사진 {result.Count}장 (포함 {bundled.Count}, 기기 {local.Count}) / 기기 폴더: {DeviceFolder}");
+            Debug.Log($"[Pano360] 사진·영상 {result.Count}개 (포함 {bundled.Count}, 기기 {local.Count}) / 기기 폴더: {DeviceFolder}");
         }
 
         static void AddFromDirectory(string dir, List<PhotoEntry> into)
@@ -107,13 +119,15 @@ namespace Pano360
             if (!Directory.Exists(dir)) return;
             foreach (var path in Directory.GetFiles(dir))
             {
-                if (!IsImage(path)) continue;
+                if (!IsMedia(path)) continue;
                 var name = Path.GetFileName(path);
+                bool vid = IsVideo(path);
                 into.Add(new PhotoEntry
                 {
                     name = name,
-                    url = new Uri(path).AbsoluteUri, // file:///... (공백/한글 이스케이프)
-                    stereo = IsStereoName(name)
+                    url = vid ? path : new Uri(path).AbsoluteUri, // 영상은 파일 경로, 사진은 file:///... (공백/한글 이스케이프)
+                    stereo = IsStereoName(name),
+                    video = vid
                 });
             }
         }

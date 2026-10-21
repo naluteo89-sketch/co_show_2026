@@ -43,6 +43,15 @@ adb push 내사진.jpg /sdcard/Android/data/com.witches.pano360/files/Photos/
 - 파일명에 `_TB`, `_OU`, `_3D` 가 들어가면 **위/아래(Top-Bottom) 스테레오 3D**로 표시합니다 (위쪽 = 왼쪽 눈).
 - `00_test_grid.jpg`는 방향 확인용 테스트 이미지입니다. 필요 없으면 지우세요.
 
+## 360 영상 넣기
+사진과 같은 곳에 MP4 를 넣으면 목록에 섞여 나와요 (홈 화면에 영상 개수 표시, 영상이면 `[VIDEO]`).
+- 앱에 포함: `Assets/StreamingAssets/Pano360/` 에 넣고 빌드 (빌드 때 photos.json 에 영상도 자동 포함)
+- 기기 폴더: `Android/data/<패키지명>/files/Photos/` 에 USB 로 복사
+- 형식: 2:1 ERP, **H.264 또는 H.265 MP4**, 30fps. 처음엔 4096×2048 로 재생 확인 후 8K 시험 (기기 디코더 한계가 있음)
+- 파일 이름에 공백·한글 없이 (Android 영상 경로 문제 예방). `_TB` 가 들어가면 위/아래 스테레오로 처리
+- 반복 재생·소리는 PanoViewer 의 `loopVideo`, `videoAudio` 로 설정. 헤드셋을 벗으면 일시정지, 다시 쓰면 이어서 재생
+- 재생 경로: VideoPlayer → RenderTexture(영상 크기, 밉맵 없음) → 사진과 같은 Equirect 셰이더
+
 ## 조작
 
 | 동작 | 컨트롤러 | 핸드트래킹 | 에디터 |

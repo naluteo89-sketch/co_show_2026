@@ -1,10 +1,14 @@
 import {api, post, esc} from "./api.js";
 import {createViewer} from "./viewer.js";
 import {createPoller} from "./poller.js";
+import {setupMotion} from "./video.js";
+import {setupEvent} from "./event.js";
 
 const $ = id => document.getElementById(id);
 let cfg = null, run = null, ctrlTimer = null;
 const viewer = createViewer($("viewer"));
+const motion = setupMotion({api, post, esc});
+const eventUI = setupEvent({api, post, esc});
 let viewVersion = 0, controlVersion = 0, sourceUrl = null;
 const poller = createPoller(
   (id, n, signal) => api(`/api/run/${id}/attempt/${n}`, {signal}),
@@ -22,6 +26,8 @@ function resetView() {
   poller.stop();
   clearTimeout(ctrlTimer);
   viewer.hide();
+  motion.hide();
+  eventUI.hide();
   if (sourceUrl) URL.revokeObjectURL(sourceUrl);
   sourceUrl = null;
   run = null;
@@ -203,7 +209,6 @@ function showResult(att) {
   const im = $("results").querySelector("img.pano");
   if (im) im.onload = () => { im.parentElement.nextElementSibling.textContent =
       `360 결과 ${im.naturalWidth} × ${im.naturalHeight}px` +
-      (att.seam ? ` · 좌우 이음새 ${att.seam.ratio <= 2 ? "양호" : att.seam.ratio <= 3.5 ? "약간 보임" : "눈에 띔 — 다시 생성 권장"} (×${att.seam.ratio})` : "") +
       " · 위 360 뷰어 화면은 미리보기라 저장해도 작은 화면 크기로만 저장돼요"; };
   if (f) $("results").insertAdjacentHTML("beforeend",
     `<div class="note">발밑이 뭉개지거나 하늘 꼭대기가 비어 보이면 →
@@ -217,6 +222,8 @@ function showResult(att) {
     catch (err) { st.innerHTML = `<span class="err">${esc(err.message)}</span>`; }
   });
   if (f) viewer.load(f.jpg || f.url);
+  motion.show(run.run_id, att, cfg);       // 5. 영상화 프롬프트 (이 결과 기준)
+  eventUI.show(run.run_id, att);           // 6. 사건 영상 (한 번 일어나는 연출)
 }
 
 async function loadAttempts() {

@@ -37,6 +37,24 @@ def request_body(model, img, note=""):
     }
 
 
+def motion_body(model, grid_img, photo=None, context="", note="", system=None, schema=None, name="motion_plan"):
+    """격자를 그린 360 결과 (+원본 사진, 생성 프롬프트) → 움직일 영역 계획."""
+    content = [{"type": "input_text", "text": "360 panorama with yaw/pitch grid:"},
+               {"type": "input_image", "image_url": image_data_url(grid_img, 2048), "detail": "high"}]
+    if photo is not None:
+        content += [{"type": "input_text", "text": "Original source photo:"},
+                    {"type": "input_image", "image_url": image_data_url(photo, 1024), "detail": "low"}]
+    if context:
+        content.append({"type": "input_text", "text": "Prompts and analysis used to generate this panorama:\n" + context})
+    if note:
+        content.append({"type": "input_text", "text": f"Operator note (may be Korean): {note}"})
+    return {
+        "model": model,
+        "input": [{"role": "system", "content": system or llm.MOTION_SYSTEM}, {"role": "user", "content": content}],
+        "text": {"format": {"type": "json_schema", "name": name, "strict": True, "schema": schema or llm.MOTION_SCHEMA}},
+    }
+
+
 def parse_response(data: dict) -> dict:
     if data.get("error"):
         raise RuntimeError(f"OpenAI 오류: {data['error']}")
@@ -64,6 +82,29 @@ class OpenAIClient:
         if not self.key:
             raise RuntimeError("OpenAI 키가 없어요. config.json 의 openai_key_file 을 확인해 주세요.")
         body = request_body(model or self.model, img, note)
+        async with self.s.post(OPENAI_URL, json=body, headers={"Authorization": f"Bearer {self.key}"}) as r:
+            data = await r.json(content_type=None)
+            if r.status != 200:
+                raise RuntimeError(f"OpenAI {r.status}: {json.dumps(data.get('error', data), ensure_ascii=False)}")
+        return parse_response(data), data.get("usage")
+
+    async def plan_motion(self, grid_img, photo=None, context="", note="", model=None):
+        """영상화: 움직일 곳(일부만) 계획 → (JSON, usage)."""
+        if not self.key:
+            raise RuntimeError("OpenAI 키가 없어요. config.json 의 openai_key_file 을 확인해 주세요.")
+        body = motion_body(model or self.model, grid_img, photo, context, note)
+        async with self.s.post(OPENAI_URL, json=body, headers={"Authorization": f"Bearer {self.key}"}) as r:
+            data = await r.json(content_type=None)
+            if r.status != 200:
+                raise RuntimeError(f"OpenAI {r.status}: {json.dumps(data.get('error', data), ensure_ascii=False)}")
+        return parse_response(data), data.get("usage")
+
+    async def plan_event(self, grid_img, photo=None, context="", note="", model=None):
+        """사건 영상: 한 번 일어나는 연출 계획 → (JSON, usage)."""
+        if not self.key:
+            raise RuntimeError("OpenAI 키가 없어요. config.json 의 openai_key_file 을 확인해 주세요.")
+        body = motion_body(model or self.model, grid_img, photo, context, note,
+                           system=llm.EVENT_SYSTEM, schema=llm.EVENT_SCHEMA, name="event_plan")
         async with self.s.post(OPENAI_URL, json=body, headers={"Authorization": f"Bearer {self.key}"}) as r:
             data = await r.json(content_type=None)
             if r.status != 200:

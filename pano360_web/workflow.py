@@ -319,3 +319,113 @@ def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
                   "_meta": {"title": "사진 영역은 다시 그리지 않음"}}
     api[smp]["inputs"]["latent_image"] = ["951", 0]
     return True
+
+
+# ----------------------------------------------------------------------------- 영상화 (LTX-2.3 + Cinemagraph LoRA)
+# ComfyUI 기본 블루프린트 "Image to Video (LTX-2.3)" 을 API 포맷으로 풀어 쓴 것 (서브그래프·동적 노드 없음 → 서버/Comfy Cloud 공통).
+# 1단계: 절반 크기(=LoRA 학습 704×512)에서 8스텝 → 2배 잠재 업스케일 → 2단계 3스텝. 오디오 잠재는 모델 구조상 같이 돌지만 저장하지 않음.
+LTX_SIGMAS_1 = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+LTX_SIGMAS_2 = "0.85, 0.7250, 0.4219, 0.0"
+
+
+def ltx_length(duration_s: float, fps: int) -> int:
+    """프레임 수는 8n+1 이어야 함 (24fps·정수 초면 그대로 맞음)."""
+    n = max(1, round((duration_s * fps) / 8))
+    return 8 * n + 1
+
+
+def build_cinemagraph(image: str, *, positive: str, negative: str, width: int, height: int,
+                      duration=1, fps=24, seed=None, prefix="VR360/motion", m: dict | None = None,
+                      lora_strength=1.2, range_mask: str | None = None) -> tuple[dict, int]:
+    """영역 화면 한 장 → 프레임(PNG) 들. 반환 (그래프, seed).
+
+    range_mask(업로드한 흑백 PNG, 흰색 = 움직여도 되는 범위)가 있으면 '범위 고정 생성':
+    모든 프레임을 원본 화면으로 채운 잠재에서 시작해 범위 밖은 매 단계 원본으로 되돌림(노이즈 마스크).
+    → 범위 밖·첫 프레임은 원본 그대로, 카메라 흔들림 없음, 범위 경계는 모델이 주변과 어울리게 만듦."""
+    m = m or {}
+    ck = m.get("ckpt", "ltx-2.3-22b-dev-fp8.safetensors")
+    seed = int(seed if seed is not None else random.randint(0, 2**48))
+    L = ltx_length(duration, fps)
+    w2, h2 = (width // 2) // 32 * 32, (height // 2) // 32 * 32       # 1단계 크기 (32 배수)
+    wf = {
+        "1": node("CheckpointLoaderSimple", {"ckpt_name": ck}, "LTX-2.3"),
+        "2": node("LTXAVTextEncoderLoader", {"text_encoder": m.get("text_encoder", "gemma_3_12B_it_fp4_mixed.safetensors"),
+                                             "ckpt_name": ck, "device": "default"}, "Gemma 텍스트 인코더"),
+        "3": node("LTXVAudioVAELoader", {"ckpt_name": ck}, "오디오 VAE (모델 구조상 필요)"),
+        "4": node("LoraLoaderModelOnly", {"model": ["1", 0], "lora_name": m.get("distilled_lora", "ltx-2.3-22b-distilled-lora-384.safetensors"),
+                                          "strength_model": float(m.get("distilled_strength", 0.5))}, "증류 LoRA"),
+        "6": node("CLIPTextEncode", {"clip": ["2", 0], "text": positive}, "Positive (일부만 움직임)"),
+        "7": node("CLIPTextEncode", {"clip": ["2", 0], "text": negative}, "Negative"),
+        "8": node("LTXVConditioning", {"positive": ["6", 0], "negative": ["7", 0], "frame_rate": float(fps)}, "프레임레이트"),
+        "9": node("LoadImage", {"image": image}, "영역 화면"),
+        "10": node("LTXVPreprocess", {"image": ["9", 0], "img_compression": int(m.get("img_compression", 18))}, "첫 프레임 전처리"),
+        "11": node("EmptyLTXVLatentVideo", {"width": w2, "height": h2, "length": L, "batch_size": 1}, "1단계 빈 영상"),
+        "12": node("LTXVImgToVideoInplace", {"vae": ["1", 2], "image": ["10", 0], "latent": ["11", 0],
+                                             "strength": 0.7, "bypass": False}, "첫 프레임 넣기 (1단계)"),
+        "13": node("LTXVEmptyLatentAudio", {"audio_vae": ["3", 0], "frames_number": L, "frame_rate": int(fps), "batch_size": 1}, "빈 오디오"),
+        "14": node("LTXVConcatAVLatent", {"video_latent": ["12", 0], "audio_latent": ["13", 0]}, "영상+오디오"),
+        "15": node("RandomNoise", {"noise_seed": seed}, "노이즈"),
+        "16": node("KSamplerSelect", {"sampler_name": "euler_ancestral_cfg_pp"}, "샘플러 1"),
+        "17": node("ManualSigmas", {"sigmas": LTX_SIGMAS_1}, "시그마 1"),
+        "18": node("CFGGuider", {"model": ["5", 0], "positive": ["8", 0], "negative": ["8", 1], "cfg": 1.0}, "가이더 1"),
+        "19": node("SamplerCustomAdvanced", {"noise": ["15", 0], "guider": ["18", 0], "sampler": ["16", 0],
+                                             "sigmas": ["17", 0], "latent_image": ["14", 0]}, "1단계 생성"),
+        "20": node("LTXVSeparateAVLatent", {"av_latent": ["19", 0]}, "분리 1"),
+        "21": node("LTXVCropGuides", {"positive": ["8", 0], "negative": ["8", 1], "latent": ["20", 0]}, "가이드 정리"),
+        "22": node("LatentUpscaleModelLoader", {"model_name": m.get("upscaler", "ltx-2.3-spatial-upscaler-x2-1.1.safetensors")}, "잠재 업스케일러"),
+        "23": node("LTXVLatentUpsampler", {"samples": ["20", 0], "upscale_model": ["22", 0], "vae": ["1", 2]}, "2배 업스케일"),
+        "24": node("LTXVImgToVideoInplace", {"vae": ["1", 2], "image": ["10", 0], "latent": ["23", 0],
+                                             "strength": 1.0, "bypass": False}, "첫 프레임 넣기 (2단계)"),
+        "25": node("LTXVConcatAVLatent", {"video_latent": ["24", 0], "audio_latent": ["20", 1]}, "영상+오디오 2"),
+        "26": node("RandomNoise", {"noise_seed": 42}, "노이즈 2"),
+        "27": node("KSamplerSelect", {"sampler_name": "euler_cfg_pp"}, "샘플러 2"),
+        "28": node("ManualSigmas", {"sigmas": LTX_SIGMAS_2}, "시그마 2"),
+        "29": node("CFGGuider", {"model": ["5", 0], "positive": ["21", 0], "negative": ["21", 1], "cfg": 1.0}, "가이더 2"),
+        "30": node("SamplerCustomAdvanced", {"noise": ["26", 0], "guider": ["29", 0], "sampler": ["27", 0],
+                                             "sigmas": ["28", 0], "latent_image": ["25", 0]}, "2단계 생성"),
+        "31": node("LTXVSeparateAVLatent", {"av_latent": ["30", 0]}, "분리 2"),
+        "32": node("VAEDecodeTiled", {"samples": ["31", 0], "vae": ["1", 2], "tile_size": 768, "overlap": 64,
+                                      "temporal_size": 4096, "temporal_overlap": 4}, "디코드"),
+        "33": node("SaveImage", {"images": ["32", 0], "filename_prefix": prefix + "_frames"}, "프레임 저장"),
+    }
+    if range_mask:
+        Lt = (L - 1) // 8 + 1                                         # 잠재 프레임 수
+        wf.update({
+            "34": node("RepeatImageBatch", {"image": ["10", 0], "amount": L}, "원본을 모든 프레임에"),
+            "35": node("ImageScale", {"image": ["34", 0], "upscale_method": "lanczos", "width": w2, "height": h2,
+                                      "crop": "disabled"}, "1단계 크기"),
+            "36": node("VAEEncode", {"pixels": ["35", 0], "vae": ["1", 2]}, "원본 잠재 (멈춘 영상)"),
+            "37": node("LoadImage", {"image": range_mask}, "움직임 범위 (흰색만 움직임)"),
+            "38": node("RepeatImageBatch", {"image": ["37", 0], "amount": max(1, Lt - 1)}, "범위 × 프레임"),
+            "39": node("EmptyImage", {"width": int(width), "height": int(height), "batch_size": 1, "color": 0},
+                       "첫 프레임 = 전부 고정"),
+            "40": node("ImageBatch", {"image1": ["39", 0], "image2": ["38", 0]}, "프레임별 범위"),
+            "41": node("ImageToMask", {"image": ["40", 0], "channel": "red"}, "범위 마스크"),
+            "42": node("SetLatentNoiseMask", {"samples": ["36", 0], "mask": ["41", 0]}, "범위 밖은 원본 고정 (1단계)"),
+            "43": node("SetLatentNoiseMask", {"samples": ["23", 0], "mask": ["41", 0]}, "범위 밖은 고정 (2단계)"),
+        })
+        wf["14"]["inputs"]["video_latent"] = ["42", 0]
+        wf["25"]["inputs"]["video_latent"] = ["43", 0]
+        for k in ("11", "12", "24"):
+            del wf[k]
+    if m.get("cinemagraph_lora") and float(lora_strength) > 0:
+        wf["5"] = node("LoraLoaderModelOnly", {"model": ["4", 0], "lora_name": m["cinemagraph_lora"],
+                                               "strength_model": float(lora_strength)}, "Cinemagraph LoRA (일부만 움직임)")
+    else:                                         # LoRA 없이 (프롬프트 + 합성 마스크로만 고정)
+        for k in ("18", "29"):
+            wf[k]["inputs"]["model"] = ["4", 0]
+    return wf, seed
+
+
+def build_sam_mask(image: str, text: str, *, ckpt="sam3.1_multiplex_fp16.safetensors", threshold=0.4,
+                   prefix="VR360/motion") -> dict:
+    """영역 화면에서 움직일 요소(text, 예: 'pond water surface') 모양 마스크 (SAM 3)."""
+    return {
+        "1": node("CheckpointLoaderSimple", {"ckpt_name": ckpt}, "SAM 3"),
+        "2": node("CLIPTextEncode", {"clip": ["1", 1], "text": text}, "찾을 것"),
+        "3": node("LoadImage", {"image": image}, "영역 화면"),
+        "4": node("SAM3_Detect", {"model": ["1", 0], "image": ["3", 0], "conditioning": ["2", 0], "threshold": float(threshold),
+                                  "refine_iterations": 2, "individual_masks": False}, "마스크 찾기"),
+        "5": node("MaskToImage", {"mask": ["4", 0]}, "마스크 → 이미지"),
+        "6": node("SaveImage", {"images": ["5", 0], "filename_prefix": prefix + "_mask"}, "마스크 저장"),
+    }

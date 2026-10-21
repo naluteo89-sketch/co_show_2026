@@ -2,12 +2,13 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Networking;
+using UnityEngine.Video;
 using UnityEngine.XR;
 
 namespace Pano360
 {
     /// <summary>
-    /// 360 사진 뷰어 본체. 씬에 이 컴포넌트 하나만 있으면 카메라/구/입력/안내 텍스트를 스스로 구성합니다.
+    /// 360 사진·영상 뷰어 본체. 씬에 이 컴포넌트 하나만 있으면 카메라/구/입력/안내 텍스트를 스스로 구성합니다.
     /// (씬에 없어도 자동 생성됩니다.)
     /// </summary>
     public class PanoViewer : MonoBehaviour
@@ -26,6 +27,10 @@ namespace Pano360
         public bool showHomeButton = true;
         [Tooltip("눈 렌더 해상도 배율. Quest 3 기본(1.0)=1680x1760/눈 으로 패널(2064x2208)의 약 80%. 1.25 ≈ 패널과 1:1")]
         [Range(1f, 1.5f)] public float eyeResolutionScale = 1.25f;
+        [Tooltip("360 영상 반복 재생")]
+        public bool loopVideo = true;
+        [Tooltip("360 영상 소리 재생")]
+        public bool videoAudio = true;
 
         Camera cam;
         Transform head;
@@ -42,6 +47,10 @@ namespace Pano360
         readonly List<PhotoEntry> photos = new List<PhotoEntry>();
         int index = -1;
         Texture2D current;
+        // 360 영상: VideoPlayer → RenderTexture → 같은 Equirect 셰이더
+        VideoPlayer videoPlayer;
+        RenderTexture videoRT;
+        bool HasContent => current != null || videoRT != null;
         bool busy;
         float fade = 1f;
 
@@ -100,6 +109,16 @@ namespace Pano360
             // HOME(취소) 버튼
             homeButton = PanoHomeButton.Create(head);
             homeButton.onActivate = () => RequestHome();
+
+            // 360 영상 재생기 (사진을 볼 때는 멈춰 있음)
+            videoPlayer = gameObject.AddComponent<VideoPlayer>();
+            videoPlayer.playOnAwake = false;
+            videoPlayer.source = VideoSource.Url;
+            videoPlayer.renderMode = VideoRenderMode.RenderTexture;
+            videoPlayer.skipOnDrop = true;                 // 디코딩이 밀리면 프레임을 건너뛰어 시간을 맞춤
+            videoPlayer.isLooping = loopVideo;
+            videoPlayer.audioOutputMode = videoAudio ? VideoAudioOutputMode.Direct : VideoAudioOutputMode.None;
+            videoPlayer.errorReceived += (vp, msg) => Debug.LogError($"[Pano360] 영상 오류 {vp.url}: {msg}");
             input.pointerOverHome = node => homeButton.IsHoveredBy(node);
             input.gazeOverHome = () => homeButton.GazeHover;
         }
@@ -112,8 +131,8 @@ namespace Pano360
             if (photos.Count == 0)
             {
                 label.Show(
-                    "No 360 photos found.\n\n" +
-                    "Put equirectangular JPG/PNG files in\n" +
+                    "No 360 photos or videos found.\n\n" +
+                    "Put equirectangular JPG/PNG/MP4 files in\n" +
                     "Assets/StreamingAssets/Pano360 (bundled)\nor on the headset:\n" +
                     PhotoSource.DeviceFolder,
                     float.PositiveInfinity);
@@ -133,7 +152,7 @@ namespace Pano360
             label.follow = true;
             label.Show(
                 "PANO360\n\n" +
-                $"{photos.Count} photos\n\n" +
+                $"{photos.Count} items ({photos.FindAll(x => x.video).Count} videos)\n\n" +
                 "Trigger / A : Start",
                 float.PositiveInfinity);
         }
@@ -153,6 +172,7 @@ namespace Pano360
             yield return FadeTo(1f);
             mat.SetTexture(MainTexId, null);
             if (current != null) { Destroy(current); current = null; }
+            StopVideo();
             index = -1;
             busy = false;
             ShowHome();
@@ -215,6 +235,11 @@ namespace Pano360
             yield return FadeTo(1f);
 
             var p = photos[i];
+            if (p.video)
+            {
+                yield return PlayVideo(i, p);
+            }
+            else
             using (var req = UnityWebRequestTexture.GetTexture(p.url, true))
             {
                 yield return req.SendWebRequest();
@@ -226,6 +251,7 @@ namespace Pano360
                     tex.wrapModeV = TextureWrapMode.Clamp;
                     tex.filterMode = FilterMode.Bilinear;
 
+                    StopVideo();
                     mat.SetTexture(MainTexId, tex);
                     mat.SetFloat(StereoId, p.stereo ? 1f : 0f);
                     if (current != null) Destroy(current);
@@ -254,14 +280,14 @@ namespace Pano360
                 yield return GoHome();
                 yield break;
             }
-            if (current != null) yield return FadeTo(0f);
+            if (HasContent) yield return FadeTo(0f);
             if (showHomeButton && mode == Mode.Viewing) homeButton.SetVisible(true);
             busy = false;
         }
 
         IEnumerator FadeTo(float target)
         {
-            if (fadeDuration <= 0f || current == null)
+            if (fadeDuration <= 0f || !HasContent)
             {
                 fade = target;
                 mat.SetFloat(FadeId, fade);
@@ -275,8 +301,73 @@ namespace Pano360
             }
         }
 
+        // ------------------------------------------------------------------ 360 영상
+        IEnumerator PlayVideo(int i, PhotoEntry p)
+        {
+            StopVideo();
+            videoPlayer.url = p.url;
+            videoPlayer.isLooping = loopVideo;
+            videoPlayer.Prepare();
+            float t0 = Time.realtimeSinceStartup;
+            while (!videoPlayer.isPrepared && Time.realtimeSinceStartup - t0 < 20f) yield return null;
+            if (!videoPlayer.isPrepared)
+            {
+                Debug.LogError($"[Pano360] 영상 준비 실패 {p.url}");
+                label.Show($"Failed to load video\n{p.name}\n(codec / resolution not supported?)", labelDuration * 2f);
+                videoPlayer.Stop();
+                yield break;
+            }
+
+            int w = (int)videoPlayer.width, h = (int)videoPlayer.height;
+            // 영상 크기 그대로의 RenderTexture (밉맵 없음 — 셰이더가 LOD0 으로 샘플링)
+            videoRT = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32)
+            {
+                name = "Pano360 Video", useMipMap = false, autoGenerateMips = false,
+                wrapModeU = TextureWrapMode.Repeat, wrapModeV = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear
+            };
+            videoRT.Create();
+            videoPlayer.targetTexture = videoRT;
+            mat.SetTexture(MainTexId, videoRT);
+            mat.SetFloat(StereoId, p.stereo ? 1f : 0f);
+            if (current != null) { Destroy(current); current = null; }
+            if (recenterOnChange) Recenter();
+
+            videoPlayer.Play();
+            float want = p.stereo ? 1f : 2f, ratio = (float)w / h;
+            string warn = Mathf.Abs(ratio - want) > 0.03f
+                ? $"\n\nWARNING: {w}x{h} is not {(p.stereo ? "1:1" : "2:1")} - video will look stretched"
+                : "";
+            label.Show($"{i + 1} / {photos.Count}  [VIDEO]\n{p.name}{(p.stereo ? "  [3D]" : "")}\n" +
+                       $"{w}x{h} / {videoPlayer.frameRate:0.#}fps / {videoPlayer.length:0.0}s{warn}",
+                       warn.Length > 0 ? labelDuration * 2f : labelDuration);
+        }
+
+        void StopVideo()
+        {
+            if (videoPlayer != null)
+            {
+                videoPlayer.Stop();
+                videoPlayer.targetTexture = null;
+            }
+            if (videoRT != null)
+            {
+                if (mat != null && mat.GetTexture(MainTexId) == videoRT) mat.SetTexture(MainTexId, null);
+                videoRT.Release();
+                Destroy(videoRT);
+                videoRT = null;
+            }
+        }
+
+        void OnApplicationPause(bool paused)
+        {
+            // 헤드셋을 벗으면 영상도 멈췄다가 다시 쓰면 이어서 재생
+            if (videoPlayer == null || videoRT == null) return;
+            if (paused) videoPlayer.Pause(); else videoPlayer.Play();
+        }
+
         void OnDestroy()
         {
+            StopVideo();
             if (current != null) Destroy(current);
             if (mat != null) Destroy(mat);
         }

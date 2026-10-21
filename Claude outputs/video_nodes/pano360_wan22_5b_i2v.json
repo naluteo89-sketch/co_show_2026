@@ -1,0 +1,622 @@
+{
+ "last_node_id": 13,
+ "last_link_id": 13,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "LoadImage",
+   "pos": [
+    0,
+    0
+   ],
+   "size": [
+    340,
+    380
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      6
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "MASK",
+     "type": "MASK",
+     "links": null,
+     "slot_index": 1
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoadImage"
+   },
+   "widgets_values": [
+    "pano_8k.jpg",
+    "image"
+   ],
+   "title": "① 360 이미지 (8K 그대로 넣어도 됨, 아래에서 줄임)"
+  },
+  {
+   "id": 2,
+   "type": "UNETLoader",
+   "pos": [
+    0,
+    420
+   ],
+   "size": [
+    340,
+    90
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      1
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "UNETLoader"
+   },
+   "widgets_values": [
+    "wan2.2_ti2v_5B_fp16.safetensors",
+    "default"
+   ],
+   "title": "② Wan 2.2 TI2V 5B"
+  },
+  {
+   "id": 3,
+   "type": "ModelSamplingSD3",
+   "pos": [
+    380,
+    420
+   ],
+   "size": [
+    260,
+    60
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      2
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ModelSamplingSD3"
+   },
+   "widgets_values": [
+    8.0
+   ],
+   "title": "shift 8"
+  },
+  {
+   "id": 4,
+   "type": "CLIPLoader",
+   "pos": [
+    0,
+    540
+   ],
+   "size": [
+    340,
+    110
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "links": [
+      3,
+      4
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan",
+    "default"
+   ],
+   "title": "텍스트 인코더 (umT5)"
+  },
+  {
+   "id": 5,
+   "type": "VAELoader",
+   "pos": [
+    0,
+    690
+   ],
+   "size": [
+    340,
+    60
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "links": [
+      5,
+      11
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "wan2.2_vae.safetensors"
+   ],
+   "title": "Wan 2.2 VAE"
+  },
+  {
+   "id": 6,
+   "type": "CLIPTextEncode",
+   "pos": [
+    380,
+    0
+   ],
+   "size": [
+    480,
+    220
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "links": [
+      7
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "Equirectangular 360 degree panorama photograph (full spherical view, the left and right edges connect). Keep the original panorama exactly as it is: same composition, objects, details, colors and lighting; only subtle natural motion with minimal change from the original. Locked-off static camera, no camera movement, no zoom. The cascading stream water and foam moves: Water flows continuously down the existing rock steps, with gently renewing white foam and small ripples below each cascade. Only things physically affected by it respond gently nearby (ripples, spray, mist, stirred leaves). Everything else stays perfectly still like a photograph: rocks, ground, buildings, tree trunks, sky. Small gentle movements only, no new objects, nothing disappears. Seamless natural loop, slow, gentle movement. Same bright natural daytime sunlight with dappled shade. Photorealistic."
+   ],
+   "title": "③ Positive (웹앱 'LTX 프롬프트 · 360 전체'에서 복사)",
+   "color": "#232"
+  },
+  {
+   "id": 7,
+   "type": "CLIPTextEncode",
+   "pos": [
+    380,
+    250
+   ],
+   "size": [
+    480,
+    140
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 4
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "links": [
+      8
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "camera movement, pan, tilt, zoom, dolly, orbit, shaky camera, handheld, whole scene moving, everything moving, swaying buildings, moving ground, morphing, warping, melting, flicker, flashing, lighting change, exposure change, new objects appearing, objects disappearing, people, animals, birds, text, watermark, scene cut, fast motion, motion blur, blurry, low quality, changing the image, altering the scene, reframing, sliding, swaying image, distorted panorama"
+   ],
+   "title": "Negative",
+   "color": "#322"
+  },
+  {
+   "id": 8,
+   "type": "Wan22ImageToVideoLatent",
+   "pos": [
+    900,
+    0
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 5
+    },
+    {
+     "name": "start_image",
+     "type": "IMAGE",
+     "link": 6
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "links": [
+      9
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "Wan22ImageToVideoLatent"
+   },
+   "widgets_values": [
+    1280,
+    640,
+    73,
+    1
+   ],
+   "title": "④ 크기·길이 — 2:1 유지 (1280×640 · 73프레임=3초)"
+  },
+  {
+   "id": 9,
+   "type": "KSampler",
+   "pos": [
+    900,
+    190
+   ],
+   "size": [
+    320,
+    270
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 2
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 7
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 8
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "links": [
+      10
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "KSampler"
+   },
+   "widgets_values": [
+    0,
+    "randomize",
+    30,
+    5.0,
+    "uni_pc",
+    "simple",
+    1.0
+   ],
+   "title": "⑤ 생성"
+  },
+  {
+   "id": 10,
+   "type": "VAEDecode",
+   "pos": [
+    1260,
+    0
+   ],
+   "size": [
+    220,
+    50
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 10
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 11
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      12
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 11,
+   "type": "CreateVideo",
+   "pos": [
+    1260,
+    90
+   ],
+   "size": [
+    220,
+    80
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 12
+    }
+   ],
+   "outputs": [
+    {
+     "name": "VIDEO",
+     "type": "VIDEO",
+     "links": [
+      13
+     ],
+     "slot_index": 0
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CreateVideo"
+   },
+   "widgets_values": [
+    24
+   ],
+   "title": "24fps"
+  },
+  {
+   "id": 12,
+   "type": "SaveVideo",
+   "pos": [
+    1260,
+    210
+   ],
+   "size": [
+    420,
+    400
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "link": 13
+    }
+   ],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "SaveVideo"
+   },
+   "widgets_values": [
+    "video/pano360_wan22_5b",
+    "auto",
+    "auto"
+   ],
+   "title": "⑥ 저장"
+  },
+  {
+   "id": 13,
+   "type": "Note",
+   "pos": [
+    900,
+    500
+   ],
+   "size": [
+    420,
+    260
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "360 이미지를 저화질(1280×640)로 영상화하는 시험용입니다.\n- VRAM: 5B fp16 + ComfyUI 기본 오프로딩이면 8~16GB 에서도 돌아감 (느려짐). 24GB 면 여유.\n- 더 가볍게: 길이 49(2초) / 크기 1024×512. 더 좋게: 1536×768.\n- 크기는 32 배수, 길이는 4n+1.\n- 360 좌우 끝은 모델이 이어 붙이는 걸 모름 → 움직일 곳이 가운데 근처에 오게.\n- 원본에서 덜 바뀌게: KSampler cfg 4~5, 프롬프트의 'Keep the original panorama exactly…' 유지."
+   ],
+   "title": "메모"
+  }
+ ],
+ "links": [
+  [
+   1,
+   2,
+   0,
+   3,
+   0,
+   "MODEL"
+  ],
+  [
+   2,
+   3,
+   0,
+   9,
+   0,
+   "MODEL"
+  ],
+  [
+   3,
+   4,
+   0,
+   6,
+   0,
+   "CLIP"
+  ],
+  [
+   4,
+   4,
+   0,
+   7,
+   0,
+   "CLIP"
+  ],
+  [
+   5,
+   5,
+   0,
+   8,
+   0,
+   "VAE"
+  ],
+  [
+   6,
+   1,
+   0,
+   8,
+   1,
+   "IMAGE"
+  ],
+  [
+   7,
+   6,
+   0,
+   9,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   8,
+   7,
+   0,
+   9,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   9,
+   8,
+   0,
+   9,
+   3,
+   "LATENT"
+  ],
+  [
+   10,
+   9,
+   0,
+   10,
+   0,
+   "LATENT"
+  ],
+  [
+   11,
+   5,
+   0,
+   10,
+   1,
+   "VAE"
+  ],
+  [
+   12,
+   10,
+   0,
+   11,
+   0,
+   "IMAGE"
+  ],
+  [
+   13,
+   11,
+   0,
+   12,
+   0,
+   "VIDEO"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

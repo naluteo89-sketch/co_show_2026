@@ -128,3 +128,236 @@ def refine_prompts(a: dict, fallback_positive: str = "") -> dict:
     if not scene and fallback_positive:
         scene = fallback_positive.replace(TRIGGER, "").strip()
     return {"positive": REFINE_TMPL.format(scene=scene), "negative": REFINE_NEG}
+
+
+# ----------------------------------------------------------------------------- 영상화 (부분 움직임 · Cinemagraph)
+# 화면 전체가 아니라 '일부만' 움직인다. LLM 은 움직일 곳(위치·움직임)만 정하고, 프롬프트 틀은 코드가 고정.
+MOTION_TRIGGER = "CINEMAGRAPH_MOTION"
+PROMPT_VER = 3          # 3: 원본에서 크게 안 바뀌는 잔잔한 움직임 강조
+MOTION_POS_TMPL = ("{trigger}. A view taken from a 360 degree panorama photograph. Keep the existing image exactly as it is: "
+                   "same composition, same objects, same details and colors, only subtle natural motion with minimal "
+                   "change from the original. "
+                   "Locked-off static camera on a tripod, no camera movement, no pan, no zoom. "
+                   "Only the {element} moves: {motion}. "
+                   "Everything else in the frame stays perfectly still like a photograph: {keep_still}. "
+                   "Seamless natural loop, continuous looping motion, {speed} movement. "
+                   "Same {lighting} as the still image. Photorealistic, natural detail.")
+MOTION_NEG_COMMON = ("camera movement, pan, tilt, zoom, dolly, orbit, shaky camera, handheld, whole scene moving, "
+                     "everything moving, swaying buildings, moving ground, morphing, warping, melting, flicker, "
+                     "flashing, lighting change, exposure change, new objects appearing, objects disappearing, people, "
+                     "animals, birds, text, watermark, scene cut, fast motion, motion blur, blurry, low quality, "
+                     "changing the image, altering the scene, reframing, sliding, swaying image, distorted panorama")
+SPEED_WORDS = {"subtle": "very subtle, slow", "slow": "slow, gentle", "medium": "steady, natural"}
+
+MOTION_SYSTEM = """You plan a cinemagraph from a finished 360 equirectangular (ERP) panorama for a Meta Quest 3 exhibit.
+The viewer stands still inside the panorama. ONLY A FEW SMALL PARTS MOVE; the rest of the 360 stays a perfectly still photo.
+Typical good choices: water surface ripples / flowing stream or waterfall, drifting clouds or mist, hanging willow
+branches or leaves swaying in a light breeze, falling leaves, flags or fabric, smoke, candle flame.
+Never animate: buildings, rocks, ground, walls, roads, tree trunks, mountains, or the camera. No people or animals.
+
+The first image is the panorama with a yellow/cyan grid: vertical lines = yaw in degrees (-180..180, 0 = centre,
+positive = right), horizontal lines = pitch (+ = up). The second image (if given) is the original source photo.
+You also get the prompts that generated the panorama — use them to name things correctly.
+
+Return 1 to 4 regions (fewer is better; pick the elements where motion adds the most life). For each region:
+- name_ko: short Korean label. element: the moving thing in English (e.g. "pond water surface").
+- yaw, pitch: centre of the region in degrees, read from the grid. Keep pitch between -60 and 60.
+- hfov: horizontal field of view of the crop in degrees (30-110). The crop must contain the moving element plus a
+  little still context around it, and should NOT include other things that could also move.
+- orientation: "landscape" (wide) or "portrait" (tall things like a waterfall or hanging willow).
+- motion: 8-25 English words describing exactly how it moves (direction, rhythm), loop-friendly (repeating, no start/end).
+- speed: subtle | slow | medium. Exhibits look best with subtle or slow.
+- strength: cinemagraph LoRA strength 0.8-2.0 (higher = more isolated motion; use ~1.2 normally).
+- keep_still: 6-15 English words naming what must stay still INSIDE this crop.
+- risk_ko: one short Korean sentence: what could go wrong (e.g. reflections moving, tree trunks bending).
+Also: summary_ko (what will move, Korean, 1-2 sentences), static_ko (what stays still overall, Korean),
+lighting (short phrase for the light, e.g. "overcast diffuse daylight").
+Regions must not overlap each other, and must not cross the panorama's pasted photo border if one is visible.
+
+SPREAD (per region): the motion is NOT confined to the element's outline. Whatever the video model makes move as a
+natural consequence (ripples, spray, mist, leaves stirred by it) is kept, fading out with distance from the region.
+spread: "none" = only the element itself (isolated things: candle flame, flag), "near" = its natural surroundings
+(~35 degrees, the usual choice for water, falls, willows), "wide" = up to ~100 degrees (a breeze through a whole grove;
+use rarely). Rigid things never move even inside the spread.
+
+INFLUENCE (optional, per region): motion that starts in a region may physically affect a FEW connected things nearby
+(e.g. a waterfall -> ripples spreading on the pool and stream below it, spray making nearby ferns tremble;
+a breeze through a willow -> the neighbouring willow branches). List them in "influence" ONLY when it is physically
+natural for THIS scene; an empty list is the normal, safe default. Never list rocks, ground, buildings, trunks, sky
+or anything rigid. For each: name_ko (Korean), target (English noun phrase for a segmentation model, e.g.
+"stream water below the waterfall"), range ("near" = within ~35 degrees of the region, "wide" = up to ~100 degrees,
+use wide rarely), strength 0.2-1.0 (how strongly it follows; ripples 0.6, trembling leaves 0.3),
+reason_ko (one short Korean sentence why it is affected)."""
+
+MOTION_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "summary_ko": {"type": "string"}, "static_ko": {"type": "string"}, "lighting": {"type": "string"},
+        "regions": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "name_ko": {"type": "string"}, "element": {"type": "string"},
+                "yaw": {"type": "number"}, "pitch": {"type": "number"}, "hfov": {"type": "number"},
+                "orientation": {"type": "string", "enum": ["landscape", "portrait"]},
+                "motion": {"type": "string"}, "speed": {"type": "string", "enum": ["subtle", "slow", "medium"]},
+                "strength": {"type": "number"}, "keep_still": {"type": "string"}, "risk_ko": {"type": "string"},
+                "spread": {"type": "string", "enum": ["none", "near", "wide"]},
+                "influence": {"type": "array", "items": {
+                    "type": "object", "additionalProperties": False,
+                    "properties": {"name_ko": {"type": "string"}, "target": {"type": "string"},
+                                   "range": {"type": "string", "enum": ["near", "wide"]},
+                                   "strength": {"type": "number"}, "reason_ko": {"type": "string"}},
+                    "required": ["name_ko", "target", "range", "strength", "reason_ko"]}},
+            },
+            "required": ["name_ko", "element", "yaw", "pitch", "hfov", "orientation", "motion", "speed",
+                         "strength", "keep_still", "risk_ko", "spread", "influence"]}},
+    },
+    "required": ["summary_ko", "static_ko", "lighting", "regions"],
+}
+
+
+def clamp_region(r: dict) -> dict:
+    r = dict(r)
+    r["yaw"] = ((float(r.get("yaw", 0)) + 180) % 360) - 180
+    r["pitch"] = max(-70.0, min(70.0, float(r.get("pitch", 0))))
+    r["hfov"] = max(20.0, min(120.0, float(r.get("hfov", 60))))
+    r["strength"] = max(0.5, min(3.0, float(r.get("strength", 1.2))))
+    if r.get("orientation") not in ("landscape", "portrait"):
+        r["orientation"] = "landscape"
+    if r.get("aspect"):                                 # 자유 비율 (마우스 선택·직접 입력)
+        r["aspect"] = round(max(0.5, min(2.0, float(r["aspect"]))), 3)
+        r["orientation"] = "portrait" if r["aspect"] < 1 else "landscape"
+    else:
+        r["aspect"] = round(704 / 512 if r["orientation"] == "landscape" else 512 / 704, 3)
+    if r.get("speed") not in SPEED_WORDS:
+        r["speed"] = "slow"
+    inf = []
+    for x in (r.get("influence") or [])[:4]:
+        tgt = str(x.get("target", "")).strip()
+        if not tgt:
+            continue
+        inf.append({"name_ko": str(x.get("name_ko", "")).strip() or tgt, "target": tgt,
+                    "range": x.get("range") if x.get("range") in ("none", "near", "wide") else "near",
+                    "strength": max(0.0, min(1.0, float(x.get("strength", 0.5) or 0))),
+                    "reason_ko": str(x.get("reason_ko", "")).strip()})
+    r["influence"] = inf
+    if r.get("spread") not in ("none", "near", "wide"):
+        r["spread"] = "near"
+    r["spread_strength"] = max(0.0, min(1.0, float(r.get("spread_strength", 0.7) or 0)))
+    return r
+
+
+SPREAD_DEG = {"none": 0, "near": 35, "wide": 100}
+
+
+def needs_global(regions) -> bool:
+    """360 전체 영상이 필요한가: 퍼짐(주변/넓게)이 켜진 영역이나 영향 대상이 있으면."""
+    return any(r.get("spread") in ("near", "wide") for r in regions or []) or has_influence(regions)
+
+
+def has_influence(regions) -> bool:
+    return any(x.get("range") in ("near", "wide") and x.get("strength", 0) > 0
+               for r in regions or [] for x in r.get("influence") or [])
+
+
+GLOBAL_POS_TMPL = ("{trigger}. Equirectangular 360 degree panorama photograph (full spherical view, the left and right "
+                   "edges connect). Keep the original panorama exactly as it is: same composition, objects, details, colors "
+                   "and lighting; only subtle natural motion with minimal change from the original. "
+                   "Locked-off static camera, no camera movement, no zoom. "
+                   "{sources} {effects} Everything else stays perfectly still like a photograph: rocks, ground, "
+                   "buildings, tree trunks, sky. Small gentle movements only, no new objects, nothing disappears. "
+                   "Seamless natural loop, {speed} movement. Same {lighting}. Photorealistic.")
+
+
+def global_motion_prompt(regions, lighting: str = "") -> dict:
+    """360 전체 저해상도 영상용 프롬프트: 원인 + 영향받는 것만 움직임 (흐름만 쓰고 픽셀은 버림)."""
+    src = " ".join(f"The {r['element'].strip().rstrip('.')} moves: {r['motion'].strip().rstrip('.')}." for r in regions or []
+                   if r.get("element") and r.get("motion"))
+    eff = [x["target"].strip().rstrip(".") for r in regions or [] for x in r.get("influence") or []
+           if x.get("range") in ("near", "wide") and x.get("strength", 0) > 0]
+    effects = ("Affected by it, only these respond gently: " + "; ".join(eff) + ".") if eff else \
+        "Only things physically affected by it respond gently nearby (ripples, spray, mist, stirred leaves)."
+    speeds = [r.get("speed", "slow") for r in regions or []]
+    speed = SPEED_WORDS.get("subtle" if "subtle" in speeds else "slow" if "slow" in speeds else "medium")
+    return {"positive": GLOBAL_POS_TMPL.format(trigger=MOTION_TRIGGER, sources=src, effects=effects, speed=speed,
+                                               lighting=(lighting or "natural daylight").strip()),
+            "negative": MOTION_NEG_COMMON}
+
+
+def motion_prompts(r: dict, lighting: str = "natural daylight") -> dict:
+    """영역 하나 → Cinemagraph 프롬프트 (트리거·카메라 고정·'이것만 움직임'·반복은 고정 문구)."""
+    pos = MOTION_POS_TMPL.format(trigger=MOTION_TRIGGER, element=r["element"].strip().rstrip("."),
+                                 motion=r["motion"].strip().rstrip("."), keep_still=r["keep_still"].strip().rstrip("."),
+                                 speed=SPEED_WORDS.get(r.get("speed"), "slow, gentle"), lighting=(lighting or "natural daylight").strip())
+    if r.get("spread", "near") in ("near", "wide"):        # 요소 모양에 가두지 않음 — 그 영향은 허용, 단단한 것만 정지
+        pos = pos.replace(f"Only the {r['element'].strip().rstrip('.')} moves:",
+                          f"The {r['element'].strip().rstrip('.')} moves:")
+        pos = pos.replace("Everything else in the frame stays perfectly still like a photograph:",
+                          "Its natural effects on the immediate surroundings (ripples, spray, mist, stirred leaves) may move "
+                          "gently; rigid things stay perfectly still like a photograph:")
+    return {"positive": pos, "negative": MOTION_NEG_COMMON}
+
+
+# ============================================================================= 사건 영상 (한 번 일어나는 연출)
+EVENT_SYSTEM = """You direct a ONE-SHOT dramatic event inside a finished 360 equirectangular panorama for a Meta Quest 3
+exhibit. The viewer stands still. A short video (about 5 seconds) is generated from a wide flat view cut from the
+panorama: it STARTS calm and identical to the still image, a dramatic natural event happens, then it SETTLES back to
+calm, ending close to the original image. The camera never moves. Typical events: a waterfall or stream upstream
+suddenly swells, a surge of water pours through (e.g. under a stone bridge arch), the pool rises and OVERFLOWS the rocks,
+white water and spray rush toward the viewer and splash across the view, then the water drains back and calms;
+or a huge mass of water bursts from a waterfall and mist covers the view.
+
+The first image is the panorama with a yaw/pitch grid (vertical lines = yaw -180..180, 0 = centre, + = right;
+horizontal = pitch, + = up). The second (if given) is the original photo. You also get the generation prompts.
+
+Return:
+- name_ko: short Korean title. summary_ko: 1-2 Korean sentences describing the event for the operator.
+- source: the thing the event comes from, English noun phrase (e.g. "the waterfall").
+- yaw, pitch: centre of the view to generate (read from the grid). Put the source a little above centre so the
+  event can spread toward the viewer. pitch between -30 and 30.
+- hfov: horizontal field of view of that view, 100-130 (wide, so the event can fill the viewer's sight).
+- calm_start: 10-20 English words, how the scene looks at the start (= the still image, gentle natural motion only).
+- event: 25-45 English words, what happens, in time order, physically plausible for THIS scene, moving toward the
+  viewer, big and dramatic, but no destruction of buildings and no new objects except water/spray/mist/leaves.
+- peak: 10-25 English words, the moment of maximum coverage (e.g. "white spray and mist fill most of the view").
+- calm_end: 10-20 English words, how it settles (water recedes, mist thins, scene returns to the original look).
+- keep: 6-15 English words, rigid things that must stay in place (rocks, pavilion, stone walls, tree trunks).
+- risk_ko: one short Korean sentence on what could go wrong."""
+
+EVENT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {k: {"type": "string"} for k in ("name_ko", "summary_ko", "source", "calm_start", "event", "peak",
+                                                   "calm_end", "keep", "risk_ko")} |
+                  {k: {"type": "number"} for k in ("yaw", "pitch", "hfov")},
+    "required": ["name_ko", "summary_ko", "source", "yaw", "pitch", "hfov", "calm_start", "event", "peak", "calm_end",
+                 "keep", "risk_ko"],
+}
+
+EVENT_POS_TMPL = ("A locked-off static camera on a tripod, a wide photographic view of this exact scene. "
+                  "The video begins calm and identical to the input image: {calm_start}. "
+                  "Then {event} "
+                  "At the peak, {peak}. "
+                  "Afterwards it settles: {calm_end}, ending like the input image. "
+                  "Throughout, {keep} stay exactly in place. One continuous shot, no camera movement, no cuts, "
+                  "photorealistic, {lighting}.")
+EVENT_NEG = ("camera movement, pan, tilt, zoom, dolly, shaky camera, scene cut, transition, different scene, "
+             "buildings collapsing, structures moving, morphing, melting, warping rocks, new objects, people, animals, "
+             "text, watermark, cartoon, CGI look, oversaturated, flicker, low quality, blurry")
+
+
+def clamp_event(e: dict) -> dict:
+    e = dict(e)
+    e["yaw"] = ((float(e.get("yaw", 0)) + 180) % 360) - 180
+    e["pitch"] = max(-40.0, min(40.0, float(e.get("pitch", 0))))
+    e["hfov"] = max(60.0, min(140.0, float(e.get("hfov", 120))))
+    for k in ("name_ko", "summary_ko", "source", "calm_start", "event", "peak", "calm_end", "keep", "risk_ko"):
+        e[k] = str(e.get(k, "") or "").strip()
+    return e
+
+
+def event_prompts(e: dict, lighting: str = "") -> dict:
+    s = lambda k: e.get(k, "").strip().rstrip(".")
+    pos = EVENT_POS_TMPL.format(calm_start=s("calm_start"), event=s("event") + ".", peak=s("peak"), calm_end=s("calm_end"),
+                                keep=s("keep") or "rocks, buildings and tree trunks",
+                                lighting=(lighting or "natural daylight").strip())
+    return {"positive": pos, "negative": EVENT_NEG}

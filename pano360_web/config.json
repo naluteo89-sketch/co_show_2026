@@ -8,8 +8,16 @@
   "comfy_cloud_key_var": "comfy_key",
   "backends": {
     "cloud": {"label": "Comfy 서버 (192.168.1.91)", "type": "comfyui", "url": "http://192.168.1.91:8000"},
-    "local": {"label": "내 PC ComfyUI", "type": "comfyui", "url": "http://127.0.0.1:8188"}
+    "local": {"label": "내 PC ComfyUI", "type": "comfyui", "url": "http://127.0.0.1:8188"},
+    "comfycloud": {"label": "Comfy Cloud (공식)", "type": "comfy_cloud", "url": "https://cloud.comfy.org"}
   },
+  "motion": {"backend": "comfycloud", "duration": 1, "fps": 24, "video_width": 4096, "crf": 18, "loop_fade": 6,
+             "sam": true, "sam_ckpt": "sam3.1_multiplex_fp16.safetensors", "sam_threshold": 0.4, "mask_feather": 14,
+             "ckpt": "ltx-2.3-22b-dev-fp8.safetensors", "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+             "distilled_lora": "ltx-2.3-22b-distilled-lora-384.safetensors",
+             "cinemagraph_lora": "ltx-2.3-22b-lora-cinemagraph-0.9.safetensors",
+             "upscaler": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors", "img_compression": 18,
+             "show_render": false, "range_mode": true, "stabilize": true, "influence": true, "global_width": 1536, "global_lora_strength": 1.0, "influence_max_shift_deg": 4.0},
   "workflow": "../test_quest3.json",
   "final_tag": "8k",
   "jpg_quality": 95,
