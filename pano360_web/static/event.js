@@ -145,7 +145,7 @@ export function setupEvent({api, post, esc}) {
     if (!v || v.state === "none") { $("evstate").textContent = ""; $("evgo").disabled = false; return; }
     const nodeLink = v.node_url ? ` · <a href="${v.node_url}" download="${runId}_video_node.json">값 넣은 노드 파일 받기</a>` : "";
     const maskTxt = v.mask_mode === "rect" && v.rect ? ` · 마스크 사각형 x${v.rect[0]} y${v.rect[1]} ${v.rect[2]}×${v.rect[3]}` : v.mask_mode === "image" ? " · 마스크 그림" : "";
-    if (v.state === "running") {
+    if (v.state === "running" || v.state === "composing") {   // composing = 서버가 4K 360 에 붙이는 중
       const pr = v.progress || {};
       $("evgo").disabled = true;
       $("evstate").innerHTML = esc(`영상 만드는 중… ${pr.state === "running" ? (pr.node_title || pr.node || "") + (pr.max ? ` ${pr.value}/${pr.max}` : "") : "대기 중"}`) + esc(maskTxt) + nodeLink;

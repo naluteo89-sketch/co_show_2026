@@ -16,7 +16,7 @@
     "flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors": "https://huggingface.co/nomadoor/flux-2-klein-4B-360-erp-outpaint-lora/blob/main/flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors"
   },
   "workflow": "../test_quest3.json",
-  "video_template": "video_nodes/retest.json",
+  "video_template": "video_nodes/event_cropgen_v1.json",
   "final_tag": "8k",
   "jpg_quality": 95,
   "viewer_dir": "../Pano360Viewer/Assets/StreamingAssets/Pano360",
@@ -30,7 +30,7 @@
   "distilled_profile": {"steps": 4, "partial_steps": 8, "cfg": 1.0},
   "ultrasharp_blend": 0.45,
   "tone_match": 0.6,
-  "keep_photo": {"enabled": true, "mask_feather": 0.04, "paste_feather": 0.05, "paste_mode": "auto", "detail_strength": 0.9, "upscale_photo": true},
+  "keep_photo": {"enabled": true, "mask_feather": 0.12, "paste_feather": 0.1, "paste_mode": "auto", "detail_strength": 0.9, "upscale_photo": true},
   "runs_dir": "runs",
   "erp_size": [2048, 1024],
   "default_yaw": -20,

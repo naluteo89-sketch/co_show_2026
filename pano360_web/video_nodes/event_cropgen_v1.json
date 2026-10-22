@@ -1,0 +1,6874 @@
+{
+ "id": "d192a10a-a36a-453a-9916-03fcd243932f",
+ "revision": 0,
+ "last_node_id": 1226,
+ "last_link_id": 164,
+ "nodes": [
+  {
+   "id": 1100,
+   "type": "RandomNoise",
+   "pos": [
+    1689.9997996454904,
+    -480.00010933951944
+   ],
+   "size": [
+    280,
+    110
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "노이즈 시드",
+     "name": "noise_seed",
+     "type": "INT",
+     "widget": {
+      "name": "noise_seed"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "노이즈",
+     "name": "NOISE",
+     "type": "NOISE",
+     "links": [
+      29,
+      106
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "RandomNoise",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    284519,
+    "fixed"
+   ],
+   "widgets_values_named": {
+    "noise_seed": 284519,
+    "control_after_generate": "fixed"
+   }
+  },
+  {
+   "id": 1101,
+   "type": "LTXVEmptyLatentAudio",
+   "pos": [
+    1789.999822429223,
+    1019.9995360840326
+   ],
+   "size": [
+    280,
+    170
+   ],
+   "flags": {},
+   "order": 30,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "audio_vae",
+     "name": "audio_vae",
+     "type": "VAE",
+     "link": 2
+    },
+    {
+     "localized_name": "frames_number",
+     "name": "frames_number",
+     "type": "INT",
+     "widget": {
+      "name": "frames_number"
+     },
+     "link": 51
+    },
+    {
+     "localized_name": "frame_rate",
+     "name": "frame_rate",
+     "type": "FLOAT,INT",
+     "widget": {
+      "name": "frame_rate"
+     },
+     "link": 3
+    },
+    {
+     "localized_name": "batch_size",
+     "name": "batch_size",
+     "type": "INT",
+     "widget": {
+      "name": "batch_size"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "Latent",
+     "name": "Latent",
+     "type": "LATENT",
+     "links": [
+      28
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVEmptyLatentAudio",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    97,
+    25,
+    1
+   ],
+   "widgets_values_named": {
+    "frames_number": 97,
+    "frame_rate": 25,
+    "batch_size": 1
+   }
+  },
+  {
+   "id": 1102,
+   "type": "PrimitiveInt",
+   "pos": [
+    460,
+    850
+   ],
+   "size": [
+    289.35703125,
+    110
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "값",
+     "name": "value",
+     "type": "INT",
+     "widget": {
+      "name": "value"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "정수",
+     "name": "INT",
+     "type": "INT",
+     "links": [
+      49
+     ]
+    }
+   ],
+   "title": "Duration (seconds) - change only this",
+   "properties": {
+    "Node name for S&R": "PrimitiveInt",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    6,
+    "fixed"
+   ],
+   "widgets_values_named": {
+    "value": 6,
+    "control_after_generate": "fixed"
+   }
+  },
+  {
+   "id": 1104,
+   "type": "LTXVPreprocess",
+   "pos": [
+    1179.9997948616442,
+    539.9997609616858
+   ],
+   "size": [
+    230,
+    110
+   ],
+   "flags": {
+    "collapsed": false
+   },
+   "order": 42,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 123
+    },
+    {
+     "localized_name": "이미지 압축",
+     "name": "img_compression",
+     "type": "INT",
+     "widget": {
+      "name": "img_compression"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "출력 이미지",
+     "name": "output_image",
+     "type": "IMAGE",
+     "links": [
+      23,
+      99,
+      164
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVPreprocess",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    35
+   ],
+   "widgets_values_named": {
+    "img_compression": 35
+   }
+  },
+  {
+   "id": 1106,
+   "type": "LTXVCropGuides",
+   "pos": [
+    2519.9998401995513,
+    -350.00008900509965
+   ],
+   "size": [
+    280,
+    120
+   ],
+   "flags": {},
+   "order": 60,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 5
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 6
+    },
+    {
+     "localized_name": "잠재 비디오",
+     "name": "latent",
+     "type": "LATENT",
+     "link": 7
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "links": [
+      104
+     ]
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "links": [
+      105
+     ]
+    },
+    {
+     "localized_name": "잠재 비디오",
+     "name": "latent",
+     "type": "LATENT",
+     "links": [
+      116
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVCropGuides",
+    "cnr_id": "comfy-core"
+   }
+  },
+  {
+   "id": 1108,
+   "type": "EmptyLTXVLatentVideo",
+   "pos": [
+    1789.999822429223,
+    779.9997413671845
+   ],
+   "size": [
+    280,
+    200
+   ],
+   "flags": {},
+   "order": 31,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "길이",
+     "name": "length",
+     "type": "INT",
+     "widget": {
+      "name": "length"
+     },
+     "link": 52
+    },
+    {
+     "localized_name": "배치 크기",
+     "name": "batch_size",
+     "type": "INT",
+     "widget": {
+      "name": "batch_size"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "잠재 데이터",
+     "name": "LATENT",
+     "type": "LATENT",
+     "links": []
+    }
+   ],
+   "title": "Stage1 latent 1024x512",
+   "properties": {
+    "Node name for S&R": "EmptyLTXVLatentVideo",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    1024,
+    512,
+    97,
+    1
+   ],
+   "widgets_values_named": {
+    "width": 1024,
+    "height": 512,
+    "length": 97,
+    "batch_size": 1
+   }
+  },
+  {
+   "id": 1109,
+   "type": "LTXVConditioning",
+   "pos": [
+    1789.999822429223,
+    599.9998489073851
+   ],
+   "size": [
+    280,
+    130
+   ],
+   "flags": {},
+   "order": 33,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 10
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 11
+    },
+    {
+     "localized_name": "프레임율",
+     "name": "frame_rate",
+     "type": "FLOAT",
+     "widget": {
+      "name": "frame_rate"
+     },
+     "link": 12
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "links": [
+      19
+     ]
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "links": [
+      20
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVConditioning",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    25
+   ],
+   "widgets_values_named": {
+    "frame_rate": 25
+   }
+  },
+  {
+   "id": 1110,
+   "type": "GetImageSize",
+   "pos": [
+    1179.9997948616442,
+    699.9998716911177
+   ],
+   "size": [
+    230,
+    130
+   ],
+   "flags": {},
+   "order": 34,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 13
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "width",
+     "name": "width",
+     "type": "INT",
+     "links": []
+    },
+    {
+     "localized_name": "height",
+     "name": "height",
+     "type": "INT",
+     "links": []
+    },
+    {
+     "localized_name": "batch_size",
+     "name": "batch_size",
+     "type": "INT",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "GetImageSize",
+    "cnr_id": "comfy-core"
+   }
+  },
+  {
+   "id": 1114,
+   "type": "PrimitiveInt",
+   "pos": [
+    460,
+    1000
+   ],
+   "size": [
+    230,
+    110
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "값",
+     "name": "value",
+     "type": "INT",
+     "widget": {
+      "name": "value"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "정수",
+     "name": "INT",
+     "type": "INT",
+     "links": [
+      3,
+      34,
+      50
+     ]
+    }
+   ],
+   "title": "Frame Rate(int)",
+   "properties": {
+    "Node name for S&R": "PrimitiveInt",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    24,
+    "fixed"
+   ],
+   "widgets_values_named": {
+    "value": 24,
+    "control_after_generate": "fixed"
+   }
+  },
+  {
+   "id": 1115,
+   "type": "LTXVAddGuide",
+   "pos": [
+    2449.9996757000185,
+    629.9998928802352
+   ],
+   "size": [
+    280,
+    240
+   ],
+   "flags": {},
+   "order": 55,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 19
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 20
+    },
+    {
+     "localized_name": "vae",
+     "name": "vae",
+     "type": "VAE",
+     "link": 93
+    },
+    {
+     "localized_name": "잠재 비디오",
+     "name": "latent",
+     "type": "LATENT",
+     "link": 138
+    },
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 23
+    },
+    {
+     "localized_name": "attention_mask",
+     "name": "attention_mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": null
+    },
+    {
+     "localized_name": "iclora_parameters",
+     "name": "iclora_parameters",
+     "shape": 7,
+     "type": "IC_LORA_PARAMETERS",
+     "link": null
+    },
+    {
+     "localized_name": "프레임 번호",
+     "name": "frame_idx",
+     "type": "INT",
+     "widget": {
+      "name": "frame_idx"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "강도",
+     "name": "strength",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "links": [
+      160
+     ]
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "links": [
+      161
+     ]
+    },
+    {
+     "localized_name": "잠재 비디오",
+     "name": "latent",
+     "type": "LATENT",
+     "links": [
+      163
+     ]
+    }
+   ],
+   "title": "I2V - first frame only",
+   "properties": {
+    "Node name for S&R": "LTXVAddGuide",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    0,
+    1
+   ],
+   "widgets_values_named": {
+    "frame_idx": 0,
+    "strength": 1
+   }
+  },
+  {
+   "id": 1116,
+   "type": "CFGGuider",
+   "pos": [
+    1689.9997996454904,
+    -300.0000776132333
+   ],
+   "size": [
+    280,
+    160
+   ],
+   "flags": {},
+   "order": 56,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "모델",
+     "name": "model",
+     "type": "MODEL",
+     "link": 155
+    },
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 25
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 26
+    },
+    {
+     "localized_name": "cfg",
+     "name": "cfg",
+     "type": "FLOAT",
+     "widget": {
+      "name": "cfg"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "가이드",
+     "name": "GUIDER",
+     "type": "GUIDER",
+     "links": [
+      30
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CFGGuider",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    1
+   ],
+   "widgets_values_named": {
+    "cfg": 1
+   }
+  },
+  {
+   "id": 1117,
+   "type": "SamplerEulerAncestral",
+   "pos": [
+    1689.9997996454904,
+    -80.00015747107682
+   ],
+   "size": [
+    280,
+    120
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "eta",
+     "name": "eta",
+     "type": "FLOAT",
+     "widget": {
+      "name": "eta"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "s_noise",
+     "name": "s_noise",
+     "type": "FLOAT",
+     "widget": {
+      "name": "s_noise"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "샘플러",
+     "name": "SAMPLER",
+     "type": "SAMPLER",
+     "links": [
+      31,
+      108
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SamplerEulerAncestral",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    0,
+    1
+   ],
+   "widgets_values_named": {
+    "eta": 0,
+    "s_noise": 1
+   }
+  },
+  {
+   "id": 1118,
+   "type": "ManualSigmas",
+   "pos": [
+    1689.9997996454904,
+    109.99981154255556
+   ],
+   "size": [
+    280,
+    110
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "시그마",
+     "name": "sigmas",
+     "type": "STRING",
+     "widget": {
+      "name": "sigmas"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "시그마",
+     "name": "SIGMAS",
+     "type": "SIGMAS",
+     "links": [
+      32
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ManualSigmas",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+   ],
+   "widgets_values_named": {
+    "sigmas": "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+   }
+  },
+  {
+   "id": 1119,
+   "type": "LTXVConcatAVLatent",
+   "pos": [
+    1689.9997996454904,
+    289.99979684667915
+   ],
+   "size": [
+    280,
+    100
+   ],
+   "flags": {},
+   "order": 57,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "video_latent",
+     "name": "video_latent",
+     "type": "LATENT",
+     "link": 27
+    },
+    {
+     "localized_name": "audio_latent",
+     "name": "audio_latent",
+     "type": "LATENT",
+     "link": 28
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "latent",
+     "name": "latent",
+     "type": "LATENT",
+     "links": [
+      33
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVConcatAVLatent",
+    "cnr_id": "comfy-core"
+   }
+  },
+  {
+   "id": 1120,
+   "type": "SamplerCustomAdvanced",
+   "pos": [
+    2159.9998695913036,
+    -470.0001256300111
+   ],
+   "size": [
+    230,
+    170
+   ],
+   "flags": {},
+   "order": 58,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "노이즈",
+     "name": "noise",
+     "type": "NOISE",
+     "link": 29
+    },
+    {
+     "localized_name": "가이더",
+     "name": "guider",
+     "type": "GUIDER",
+     "link": 30
+    },
+    {
+     "localized_name": "샘플러",
+     "name": "sampler",
+     "type": "SAMPLER",
+     "link": 31
+    },
+    {
+     "localized_name": "시그마 배열",
+     "name": "sigmas",
+     "type": "SIGMAS",
+     "link": 32
+    },
+    {
+     "localized_name": "잠재 데이터",
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 33
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "출력",
+     "name": "output",
+     "type": "LATENT",
+     "links": []
+    },
+    {
+     "localized_name": "디노이즈 출력",
+     "name": "denoised_output",
+     "type": "LATENT",
+     "links": [
+      47
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SamplerCustomAdvanced",
+    "cnr_id": "comfy-core"
+   }
+  },
+  {
+   "id": 1123,
+   "type": "ComfyMathExpression",
+   "pos": [
+    460,
+    1170
+   ],
+   "size": [
+    230,
+    170
+   ],
+   "flags": {
+    "collapsed": true
+   },
+   "order": 20,
+   "mode": 0,
+   "inputs": [
+    {
+     "label": "a",
+     "localized_name": "a",
+     "name": "values.a",
+     "type": "FLOAT,INT,BOOLEAN",
+     "link": 34
+    },
+    {
+     "label": "b",
+     "localized_name": "b",
+     "name": "values.b",
+     "shape": 7,
+     "type": "FLOAT,INT,BOOLEAN",
+     "link": null
+    },
+    {
+     "localized_name": "수식",
+     "name": "expression",
+     "type": "STRING",
+     "widget": {
+      "name": "expression"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "실수",
+     "name": "FLOAT",
+     "type": "FLOAT",
+     "links": [
+      12,
+      42
+     ]
+    },
+    {
+     "localized_name": "정수",
+     "name": "INT",
+     "type": "INT",
+     "links": []
+    },
+    {
+     "localized_name": "BOOL",
+     "name": "BOOL",
+     "type": "BOOLEAN",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ComfyMathExpression",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "a"
+   ],
+   "widgets_values_named": {
+    "expression": "a"
+   }
+  },
+  {
+   "id": 1125,
+   "type": "ImageScale",
+   "pos": [
+    829.99990080723,
+    979.9997869346494
+   ],
+   "size": [
+    280,
+    239.984375
+   ],
+   "flags": {},
+   "order": 24,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 88
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      13,
+      63
+     ]
+    }
+   ],
+   "title": "Resize ERP to 2048 x 1024",
+   "properties": {
+    "Node name for S&R": "ImageScale",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "lanczos",
+    2048,
+    1024,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "lanczos",
+    "width": 2048,
+    "height": 1024,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1113,
+   "type": "PrimitiveInt",
+   "pos": [
+    460,
+    540
+   ],
+   "size": [
+    230,
+    110
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "값",
+     "name": "value",
+     "type": "INT",
+     "widget": {
+      "name": "value"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "정수",
+     "name": "INT",
+     "type": "INT",
+     "links": []
+    }
+   ],
+   "title": "Width",
+   "properties": {
+    "Node name for S&R": "PrimitiveInt",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    2048,
+    "fixed"
+   ],
+   "widgets_values_named": {
+    "value": 2048,
+    "control_after_generate": "fixed"
+   }
+  },
+  {
+   "id": 1098,
+   "type": "PrimitiveInt",
+   "pos": [
+    460,
+    690
+   ],
+   "size": [
+    230,
+    110
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "값",
+     "name": "value",
+     "type": "INT",
+     "widget": {
+      "name": "value"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "정수",
+     "name": "INT",
+     "type": "INT",
+     "links": []
+    }
+   ],
+   "title": "height",
+   "properties": {
+    "Node name for S&R": "PrimitiveInt",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    1024,
+    "fixed"
+   ],
+   "widgets_values_named": {
+    "value": 1024,
+    "control_after_generate": "fixed"
+   }
+  },
+  {
+   "id": 1112,
+   "type": "CLIPTextEncode",
+   "pos": [
+    1019.9998698208619,
+    69.99987670452265
+   ],
+   "size": [
+    590,
+    200
+   ],
+   "flags": {
+    "collapsed": false
+   },
+   "order": 22,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "clip",
+     "name": "clip",
+     "type": "CLIP",
+     "link": 39
+    },
+    {
+     "localized_name": "프롬프트 텍스트",
+     "name": "text",
+     "type": "STRING",
+     "widget": {
+      "name": "text"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "조건",
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "links": [
+      11
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "camera movement, camera pan, zoom, dolly, rotation, shaking, morphing rocks, changing cliff, cave shape changing, new structures, warping background, floating objects, people, animals, thick fog, mist covering the scene, smoke, steam, milky blurred water, frozen water, water flowing over dry ground, polygonal faceted texture, blocky artifacts, ghosting, semi-transparent overlay, trails, frame blending, smeared texture, painterly, oversharpened, flickering, boiling textures, scene cut, text, subtitles, watermark, music, speech, voices"
+   ],
+   "widgets_values_named": {
+    "text": "camera movement, camera pan, zoom, dolly, rotation, shaking, morphing rocks, changing cliff, cave shape changing, new structures, warping background, floating objects, people, animals, thick fog, mist covering the scene, smoke, steam, milky blurred water, frozen water, water flowing over dry ground, polygonal faceted texture, blocky artifacts, ghosting, semi-transparent overlay, trails, frame blending, smeared texture, painterly, oversharpened, flickering, boiling textures, scene cut, text, subtitles, watermark, music, speech, voices"
+   },
+   "color": "#323",
+   "bgcolor": "#535"
+  },
+  {
+   "id": 1122,
+   "type": "CreateVideo",
+   "pos": [
+    4935.024822045174,
+    -37.22750422552531
+   ],
+   "size": [
+    346.601171875,
+    150
+   ],
+   "flags": {},
+   "order": 78,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "images",
+     "type": "IMAGE",
+     "link": 151
+    },
+    {
+     "localized_name": "오디오",
+     "name": "audio",
+     "shape": 7,
+     "type": "AUDIO",
+     "link": 41
+    },
+    {
+     "localized_name": "fps",
+     "name": "fps",
+     "type": "FLOAT",
+     "widget": {
+      "name": "fps"
+     },
+     "link": 42
+    },
+    {
+     "localized_name": "bit_depth",
+     "name": "bit_depth",
+     "shape": 7,
+     "type": "COMBO",
+     "widget": {
+      "name": "bit_depth"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "color_space",
+     "name": "color_space",
+     "shape": 7,
+     "type": "COMBO",
+     "widget": {
+      "name": "color_space"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "codec",
+     "name": "codec",
+     "shape": 7,
+     "type": "COMBO",
+     "widget": {
+      "name": "codec"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "비디오",
+     "name": "VIDEO",
+     "type": "VIDEO",
+     "links": [
+      86
+     ]
+    }
+   ],
+   "title": "4K panorama with generated nature ambience",
+   "properties": {
+    "Node name for S&R": "CreateVideo",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    24,
+    "auto",
+    "sRGB",
+    "none"
+   ],
+   "widgets_values_named": {
+    "fps": 24,
+    "bit_depth": "auto",
+    "color_space": "sRGB",
+    "codec": "none"
+   }
+  },
+  {
+   "id": 1105,
+   "type": "VAEDecodeTiled",
+   "pos": [
+    2519.9998401995513,
+    -170.00010370097607
+   ],
+   "size": [
+    280,
+    200
+   ],
+   "flags": {},
+   "order": 67,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "잠재 데이터",
+     "name": "samples",
+     "type": "LATENT",
+     "link": 112
+    },
+    {
+     "localized_name": "vae",
+     "name": "vae",
+     "type": "VAE",
+     "link": 94
+    },
+    {
+     "localized_name": "타일 크기",
+     "name": "tile_size",
+     "type": "INT",
+     "widget": {
+      "name": "tile_size"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "겹침",
+     "name": "overlap",
+     "type": "INT",
+     "widget": {
+      "name": "overlap"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "시간 크기",
+     "name": "temporal_size",
+     "type": "INT",
+     "widget": {
+      "name": "temporal_size"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "시간 겹침",
+     "name": "temporal_overlap",
+     "type": "INT",
+     "widget": {
+      "name": "temporal_overlap"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      65,
+      142
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecodeTiled",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    768,
+    128,
+    4096,
+    64
+   ],
+   "widgets_values_named": {
+    "tile_size": 768,
+    "overlap": 128,
+    "temporal_size": 4096,
+    "temporal_overlap": 64
+   }
+  },
+  {
+   "id": 1107,
+   "type": "LTXVAudioVAEDecode",
+   "pos": [
+    2519.9998401995513,
+    119.99988809638853
+   ],
+   "size": [
+    280,
+    100
+   ],
+   "flags": {},
+   "order": 68,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "samples",
+     "name": "samples",
+     "type": "LATENT",
+     "link": 113
+    },
+    {
+     "label": "Audio VAE",
+     "localized_name": "audio_vae",
+     "name": "audio_vae",
+     "type": "VAE",
+     "link": 46
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "Audio",
+     "name": "Audio",
+     "type": "AUDIO",
+     "links": [
+      41
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVAudioVAEDecode",
+    "cnr_id": "comfy-core"
+   }
+  },
+  {
+   "id": 1121,
+   "type": "LTXVSeparateAVLatent",
+   "pos": [
+    2159.9998695913036,
+    -220.0001150928424
+   ],
+   "size": [
+    250,
+    100
+   ],
+   "flags": {},
+   "order": 59,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "av_latent",
+     "name": "av_latent",
+     "type": "LATENT",
+     "link": 47
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "video_latent",
+     "name": "video_latent",
+     "type": "LATENT",
+     "links": [
+      7
+     ]
+    },
+    {
+     "localized_name": "audio_latent",
+     "name": "audio_latent",
+     "type": "LATENT",
+     "links": [
+      102
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVSeparateAVLatent",
+    "cnr_id": "comfy-core"
+   }
+  },
+  {
+   "id": 1128,
+   "type": "CLIPTextEncode",
+   "pos": [
+    1009.9997932670285,
+    -420.0000678159827
+   ],
+   "size": [
+    620,
+    420
+   ],
+   "flags": {},
+   "order": 23,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "clip",
+     "name": "clip",
+     "type": "CLIP",
+     "link": 48
+    },
+    {
+     "localized_name": "프롬프트 텍스트",
+     "name": "text",
+     "type": "STRING",
+     "widget": {
+      "name": "text"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "조건",
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "links": [
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "Wide-angle photorealistic nature video, locked-off static camera, no camera movement. A mossy rock gorge with a dark cave on the left, a tall thin waterfall in the back and a clear turquoise pool below. At first the waterfall flows normally and the pool ripples gently. Then the waterfall swells and pours much harder, and a thick torrent of clear water bursts out of the dark cave mouth and gushes into the pool. The pool churns with white foam, waves roll outward across the surface and splash against the boulders at the edge. Toward the end the torrent eases and the water returns to a steady, natural flow, while the waterfall keeps falling. The water is clear and liquid with sharp detailed ripples, spray and foam that follow the flow. The rocks, cliffs, cave, trees and sky stay perfectly still. Sound: roaring rush of water echoing from the cave, heavy waterfall splash."
+   ],
+   "widgets_values_named": {
+    "text": "Wide-angle photorealistic nature video, locked-off static camera, no camera movement. A mossy rock gorge with a dark cave on the left, a tall thin waterfall in the back and a clear turquoise pool below. At first the waterfall flows normally and the pool ripples gently. Then the waterfall swells and pours much harder, and a thick torrent of clear water bursts out of the dark cave mouth and gushes into the pool. The pool churns with white foam, waves roll outward across the surface and splash against the boulders at the edge. Toward the end the torrent eases and the water returns to a steady, natural flow, while the waterfall keeps falling. The water is clear and liquid with sharp detailed ripples, spray and foam that follow the flow. The rocks, cliffs, cave, trees and sky stay perfectly still. Sound: roaring rush of water echoing from the cave, heavy waterfall splash."
+   },
+   "color": "#232",
+   "bgcolor": "#353"
+  },
+  {
+   "id": 1127,
+   "type": "CheckpointLoaderSimple",
+   "pos": [
+    469.9999301989825,
+    -420.0000678159827
+   ],
+   "size": [
+    420,
+    160
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "체크포인트 파일명",
+     "name": "ckpt_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "ckpt_name"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "모델",
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": []
+    },
+    {
+     "localized_name": "CLIP",
+     "name": "CLIP",
+     "type": "CLIP",
+     "links": []
+    },
+    {
+     "localized_name": "VAE",
+     "name": "VAE",
+     "type": "VAE",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CheckpointLoaderSimple",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "ltx-2.3-22b-distilled-fp8.safetensors"
+   ],
+   "widgets_values_named": {
+    "ckpt_name": "ltx-2.3-22b-distilled-fp8.safetensors"
+   }
+  },
+  {
+   "id": 1126,
+   "type": "LTXVAudioVAELoader",
+   "pos": [
+    469.9999301989825,
+    -140.00015257245104
+   ],
+   "size": [
+    420,
+    110
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "ckpt_name",
+     "name": "ckpt_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "ckpt_name"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "Audio VAE",
+     "name": "Audio VAE",
+     "type": "VAE",
+     "links": [
+      2,
+      46
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXVAudioVAELoader",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "ltx-2.3-22b-distilled-fp8.safetensors"
+   ],
+   "widgets_values_named": {
+    "ckpt_name": "ltx-2.3-22b-distilled-fp8.safetensors"
+   }
+  },
+  {
+   "id": 1103,
+   "type": "LTXAVTextEncoderLoader",
+   "pos": [
+    469.9999301989825,
+    89.99984412353888
+   ],
+   "size": [
+    410,
+    160
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "text_encoder",
+     "name": "text_encoder",
+     "type": "COMBO",
+     "widget": {
+      "name": "text_encoder"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "ckpt_name",
+     "name": "ckpt_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "ckpt_name"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "device",
+     "name": "device",
+     "type": "COMBO",
+     "widget": {
+      "name": "device"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "CLIP",
+     "name": "CLIP",
+     "type": "CLIP",
+     "links": [
+      39,
+      48
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LTXAVTextEncoderLoader",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "gemma_3_12B_it_fp4_mixed.safetensors",
+    "ltx-2.3-22b-distilled-fp8.safetensors",
+    "default"
+   ],
+   "widgets_values_named": {
+    "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+    "ckpt_name": "ltx-2.3-22b-distilled-fp8.safetensors",
+    "device": "default"
+   }
+  },
+  {
+   "id": 1130,
+   "type": "ComfyMathExpression",
+   "pos": [
+    460,
+    1220
+   ],
+   "size": [
+    400,
+    200
+   ],
+   "flags": {
+    "collapsed": true
+   },
+   "order": 21,
+   "mode": 0,
+   "inputs": [
+    {
+     "label": "a",
+     "localized_name": "a",
+     "name": "values.a",
+     "type": "FLOAT,INT,BOOLEAN",
+     "link": 49
+    },
+    {
+     "label": "b",
+     "localized_name": "b",
+     "name": "values.b",
+     "shape": 7,
+     "type": "FLOAT,INT,BOOLEAN",
+     "link": 50
+    },
+    {
+     "label": "c",
+     "localized_name": "c",
+     "name": "values.c",
+     "shape": 7,
+     "type": "FLOAT,INT,BOOLEAN",
+     "link": null
+    },
+    {
+     "localized_name": "수식",
+     "name": "expression",
+     "type": "STRING",
+     "widget": {
+      "name": "expression"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "실수",
+     "name": "FLOAT",
+     "type": "FLOAT",
+     "links": []
+    },
+    {
+     "localized_name": "정수",
+     "name": "INT",
+     "type": "INT",
+     "links": [
+      51,
+      52,
+      89,
+      90,
+      125,
+      140,
+      147
+     ]
+    },
+    {
+     "localized_name": "BOOL",
+     "name": "BOOL",
+     "type": "BOOLEAN",
+     "links": null
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ComfyMathExpression",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "a * b + 1"
+   ],
+   "widgets_values_named": {
+    "expression": "a * b + 1"
+   }
+  },
+  {
+   "id": 1131,
+   "type": "LoadImage",
+   "pos": [
+    -18.81483164891597,
+    101.52278778408345
+   ],
+   "size": [
+    360,
+    360
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "COMBO",
+     "widget": {
+      "name": "image"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "업로드할 파일 선택",
+     "name": "upload",
+     "type": "IMAGEUPLOAD",
+     "widget": {
+      "name": "upload"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      88,
+      120,
+      145
+     ]
+    },
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "slot_index": 1,
+     "links": []
+    }
+   ],
+   "title": "Select existing Quest360_HQ final_4k image",
+   "properties": {
+    "Node name for S&R": "LoadImage",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "dd4d04c6f91e43529b1b79b290f87aaaa9b711ebd5d8d83bf197c3f72f45cf1b.jpg",
+    "image"
+   ],
+   "widgets_values_named": {
+    "image": "dd4d04c6f91e43529b1b79b290f87aaaa9b711ebd5d8d83bf197c3f72f45cf1b.jpg",
+    "upload": "image"
+   }
+  },
+  {
+   "id": 1132,
+   "type": "LoraLoaderModelOnly",
+   "pos": [
+    650,
+    -220
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 28,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "모델",
+     "name": "model",
+     "type": "MODEL",
+     "link": 92
+    },
+    {
+     "localized_name": "LoRA 이름",
+     "name": "lora_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "lora_name"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "모델 강도",
+     "name": "strength_model",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength_model"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "모델",
+     "name": "MODEL",
+     "type": "MODEL",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "title": "360 equirectangular video LoRA",
+   "properties": {
+    "Node name for S&R": "LoraLoaderModelOnly",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "TheBurgstall__Seamless-Equirectangular-LTX23-LoRA__Seamless-Equirectangular-LTX2.3-LoRA.safetensors",
+    0.8
+   ],
+   "widgets_values_named": {
+    "lora_name": "TheBurgstall__Seamless-Equirectangular-LTX23-LoRA__Seamless-Equirectangular-LTX2.3-LoRA.safetensors",
+    "strength_model": 0.8
+   }
+  },
+  {
+   "id": 1133,
+   "type": "SolidMask",
+   "pos": [
+    2500,
+    700
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "값",
+     "name": "value",
+     "type": "FLOAT",
+     "widget": {
+      "name": "value"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "slot_index": 0,
+     "links": [
+      58
+     ]
+    }
+   ],
+   "title": "Static panorama outside motion mask",
+   "properties": {
+    "Node name for S&R": "SolidMask",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    0,
+    2048,
+    1024
+   ],
+   "widgets_values_named": {
+    "value": 0,
+    "width": 2048,
+    "height": 1024
+   }
+  },
+  {
+   "id": 1134,
+   "type": "SolidMask",
+   "pos": [
+    2500,
+    900
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "값",
+     "name": "value",
+     "type": "FLOAT",
+     "widget": {
+      "name": "value"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "slot_index": 0,
+     "links": [
+      57
+     ]
+    }
+   ],
+   "title": "Motion Area (Center Waterflow)",
+   "properties": {
+    "Node name for S&R": "SolidMask",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    1,
+    1424,
+    560
+   ],
+   "widgets_values_named": {
+    "value": 1,
+    "width": 1424,
+    "height": 560
+   }
+  },
+  {
+   "id": 1135,
+   "type": "FeatherMask",
+   "pos": [
+    2850,
+    900
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 27,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "type": "MASK",
+     "link": 57
+    },
+    {
+     "localized_name": "왼쪽",
+     "name": "left",
+     "type": "INT",
+     "widget": {
+      "name": "left"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "위쪽",
+     "name": "top",
+     "type": "INT",
+     "widget": {
+      "name": "top"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "오른쪽",
+     "name": "right",
+     "type": "INT",
+     "widget": {
+      "name": "right"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "아래쪽",
+     "name": "bottom",
+     "type": "INT",
+     "widget": {
+      "name": "bottom"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "slot_index": 0,
+     "links": [
+      59
+     ]
+    }
+   ],
+   "title": "Fade motion boundary",
+   "properties": {
+    "Node name for S&R": "FeatherMask",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    120,
+    120,
+    120,
+    120
+   ],
+   "widgets_values_named": {
+    "left": 120,
+    "top": 120,
+    "right": 120,
+    "bottom": 120
+   }
+  },
+  {
+   "id": 1136,
+   "type": "MaskComposite",
+   "pos": [
+    3200,
+    900
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 39,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "대상",
+     "name": "destination",
+     "type": "MASK",
+     "link": 58
+    },
+    {
+     "localized_name": "원본",
+     "name": "source",
+     "type": "MASK",
+     "link": 59
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "연산",
+     "name": "operation",
+     "type": "COMBO",
+     "widget": {
+      "name": "operation"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "slot_index": 0,
+     "links": [
+      91
+     ]
+    }
+   ],
+   "title": "Apply Motion to Center",
+   "properties": {
+    "Node name for S&R": "MaskComposite",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    200,
+    380,
+    "add"
+   ],
+   "widgets_values_named": {
+    "x": 200,
+    "y": 380,
+    "operation": "add"
+   }
+  },
+  {
+   "id": 1140,
+   "type": "RepeatImageBatch",
+   "pos": [
+    3550,
+    600
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 35,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 63
+    },
+    {
+     "localized_name": "개수",
+     "name": "amount",
+     "type": "INT",
+     "widget": {
+      "name": "amount"
+     },
+     "link": 89
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      64
+     ]
+    }
+   ],
+   "title": "Static reference - automatic frame count",
+   "properties": {
+    "Node name for S&R": "RepeatImageBatch",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    73
+   ],
+   "widgets_values_named": {
+    "amount": 73
+   }
+  },
+  {
+   "id": 1141,
+   "type": "ImageCompositeMasked",
+   "pos": [
+    3900,
+    700
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 69,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "대상",
+     "name": "destination",
+     "type": "IMAGE",
+     "link": 64
+    },
+    {
+     "localized_name": "원본",
+     "name": "source",
+     "type": "IMAGE",
+     "link": 65
+    },
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": 91
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "원본 크기 조정",
+     "name": "resize_source",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "resize_source"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      72,
+      73,
+      77
+     ]
+    }
+   ],
+   "title": "Composite motion onto fixed panorama",
+   "properties": {
+    "Node name for S&R": "ImageCompositeMasked",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    0,
+    0,
+    false
+   ],
+   "widgets_values_named": {
+    "x": 0,
+    "y": 0,
+    "resize_source": false
+   }
+  },
+  {
+   "id": 1145,
+   "type": "ImageCrop",
+   "pos": [
+    2835.0248220451745,
+    -337.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 71,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 72
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      75
+     ]
+    }
+   ],
+   "title": "Wrap pad: last 128px",
+   "properties": {
+    "Node name for S&R": "ImageCrop",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    128,
+    1024,
+    1920,
+    0
+   ],
+   "widgets_values_named": {
+    "width": 128,
+    "height": 1024,
+    "x": 1920,
+    "y": 0
+   }
+  },
+  {
+   "id": 1146,
+   "type": "ImageCrop",
+   "pos": [
+    2835.0248220451745,
+    -137.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 72,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 73
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      79
+     ]
+    }
+   ],
+   "title": "Wrap pad: first 128px",
+   "properties": {
+    "Node name for S&R": "ImageCrop",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    128,
+    1024,
+    0,
+    0
+   ],
+   "widgets_values_named": {
+    "width": 128,
+    "height": 1024,
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "id": 1147,
+   "type": "EmptyImage",
+   "pos": [
+    4331.56557950108,
+    965.9090909090914
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 32,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "배치 크기",
+     "name": "batch_size",
+     "type": "INT",
+     "widget": {
+      "name": "batch_size"
+     },
+     "link": 90
+    },
+    {
+     "localized_name": "색",
+     "name": "color",
+     "type": "INT",
+     "widget": {
+      "name": "color"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      74
+     ]
+    }
+   ],
+   "title": "2304 x 1024 wrap canvas",
+   "properties": {
+    "Node name for S&R": "EmptyImage",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    2304,
+    1024,
+    73,
+    0
+   ],
+   "widgets_values_named": {
+    "width": 2304,
+    "height": 1024,
+    "batch_size": 73,
+    "color": 0
+   }
+  },
+  {
+   "id": 1148,
+   "type": "ImageCompositeMasked",
+   "pos": [
+    3185.0248220451745,
+    -337.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 74,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "대상",
+     "name": "destination",
+     "type": "IMAGE",
+     "link": 74
+    },
+    {
+     "localized_name": "원본",
+     "name": "source",
+     "type": "IMAGE",
+     "link": 75
+    },
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "원본 크기 조정",
+     "name": "resize_source",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "resize_source"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      76
+     ]
+    }
+   ],
+   "title": "Left wrap context",
+   "properties": {
+    "Node name for S&R": "ImageCompositeMasked",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    0,
+    0,
+    false
+   ],
+   "widgets_values_named": {
+    "x": 0,
+    "y": 0,
+    "resize_source": false
+   }
+  },
+  {
+   "id": 1149,
+   "type": "ImageCompositeMasked",
+   "pos": [
+    3535.0248220451745,
+    -337.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 76,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "대상",
+     "name": "destination",
+     "type": "IMAGE",
+     "link": 76
+    },
+    {
+     "localized_name": "원본",
+     "name": "source",
+     "type": "IMAGE",
+     "link": 77
+    },
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "원본 크기 조정",
+     "name": "resize_source",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "resize_source"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      78
+     ]
+    }
+   ],
+   "title": "Panorama center",
+   "properties": {
+    "Node name for S&R": "ImageCompositeMasked",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    128,
+    0,
+    false
+   ],
+   "widgets_values_named": {
+    "x": 128,
+    "y": 0,
+    "resize_source": false
+   }
+  },
+  {
+   "id": 1150,
+   "type": "ImageCompositeMasked",
+   "pos": [
+    3885.024822045174,
+    -337.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 79,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "대상",
+     "name": "destination",
+     "type": "IMAGE",
+     "link": 78
+    },
+    {
+     "localized_name": "원본",
+     "name": "source",
+     "type": "IMAGE",
+     "link": 79
+    },
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "원본 크기 조정",
+     "name": "resize_source",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "resize_source"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      81,
+      114
+     ]
+    }
+   ],
+   "title": "Right wrap context",
+   "properties": {
+    "Node name for S&R": "ImageCompositeMasked",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    2176,
+    0,
+    false
+   ],
+   "widgets_values_named": {
+    "x": 2176,
+    "y": 0,
+    "resize_source": false
+   }
+  },
+  {
+   "id": 1151,
+   "type": "UpscaleModelLoader",
+   "pos": [
+    3885.024822045174,
+    -37.22750422552531
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "모델 파일명",
+     "name": "model_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "model_name"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "업스케일 모델",
+     "name": "UPSCALE_MODEL",
+     "type": "UPSCALE_MODEL",
+     "slot_index": 0,
+     "links": [
+      80
+     ]
+    }
+   ],
+   "title": "RealESRGAN 2x",
+   "properties": {
+    "Node name for S&R": "UpscaleModelLoader",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "RealESRGAN_x2plus.pth"
+   ],
+   "widgets_values_named": {
+    "model_name": "RealESRGAN_x2plus.pth"
+   }
+  },
+  {
+   "id": 1152,
+   "type": "ImageUpscaleWithModel",
+   "pos": [
+    4235.024822045174,
+    -337.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 82,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "확대 모델",
+     "name": "upscale_model",
+     "type": "UPSCALE_MODEL",
+     "link": 80
+    },
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 81
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "title": "AI upscale frames to 4K",
+   "properties": {
+    "Node name for S&R": "ImageUpscaleWithModel",
+    "cnr_id": "comfy-core"
+   }
+  },
+  {
+   "id": 1153,
+   "type": "ImageCrop",
+   "pos": [
+    4585.024822045174,
+    -337.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 84,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 115
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "title": "4096 x 2048 ERP frames",
+   "properties": {
+    "Node name for S&R": "ImageCrop",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    4096,
+    2048,
+    256,
+    0
+   ],
+   "widgets_values_named": {
+    "width": 4096,
+    "height": 2048,
+    "x": 256,
+    "y": 0
+   }
+  },
+  {
+   "id": 1154,
+   "type": "CreateVideo",
+   "pos": [
+    4935.024822045174,
+    -337.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 77,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "images",
+     "type": "IMAGE",
+     "link": 150
+    },
+    {
+     "localized_name": "오디오",
+     "name": "audio",
+     "shape": 7,
+     "type": "AUDIO",
+     "link": null
+    },
+    {
+     "localized_name": "fps",
+     "name": "fps",
+     "type": "FLOAT",
+     "widget": {
+      "name": "fps"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "bit_depth",
+     "name": "bit_depth",
+     "shape": 7,
+     "type": "COMBO",
+     "widget": {
+      "name": "bit_depth"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "color_space",
+     "name": "color_space",
+     "shape": 7,
+     "type": "COMBO",
+     "widget": {
+      "name": "color_space"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "codec",
+     "name": "codec",
+     "shape": 7,
+     "type": "COMBO",
+     "widget": {
+      "name": "codec"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "비디오",
+     "name": "VIDEO",
+     "type": "VIDEO",
+     "slot_index": 0,
+     "links": [
+      85
+     ]
+    }
+   ],
+   "title": "4K silent I2V video",
+   "properties": {
+    "Node name for S&R": "CreateVideo",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    24,
+    "auto",
+    "sRGB",
+    "none"
+   ],
+   "widgets_values_named": {
+    "fps": 24,
+    "bit_depth": "auto",
+    "color_space": "sRGB",
+    "codec": "none"
+   }
+  },
+  {
+   "id": 1155,
+   "type": "SaveVideo",
+   "pos": [
+    5694.36249367679,
+    -310.38540466917516
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 80,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "비디오",
+     "name": "video",
+     "type": "VIDEO",
+     "link": 85
+    },
+    {
+     "localized_name": "파일명 접두사",
+     "name": "filename_prefix",
+     "type": "STRING",
+     "widget": {
+      "name": "filename_prefix"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "포맷",
+     "name": "format",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "코덱",
+     "name": "format.codec",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format.codec"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "encoding",
+     "name": "format.codec.encoding",
+     "shape": 7,
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format.codec.encoding"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "코덱",
+     "name": "codec",
+     "shape": 7,
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "codec"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "video",
+     "name": "video",
+     "type": "VIDEO",
+     "links": null
+    }
+   ],
+   "title": "Quest360_I2V/stream_wind_360_silent_4k",
+   "properties": {
+    "Node name for S&R": "SaveVideo",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "Quest360_I2V/stream_wind_360_silent_4k_cropgen_v1",
+    "mp4",
+    "h264",
+    "auto",
+    "auto"
+   ],
+   "widgets_values_named": {
+    "filename_prefix": "Quest360_I2V/stream_wind_360_silent_4k_cropgen_v1",
+    "format": "mp4",
+    "format.codec": "h264",
+    "format.codec.encoding": "auto",
+    "codec": "auto"
+   }
+  },
+  {
+   "id": 1156,
+   "type": "SaveVideo",
+   "pos": [
+    5285.024822045174,
+    62.77249577447469
+   ],
+   "size": [
+    345.8833984375,
+    150
+   ],
+   "flags": {},
+   "order": 81,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "비디오",
+     "name": "video",
+     "type": "VIDEO",
+     "link": 86
+    },
+    {
+     "localized_name": "파일명 접두사",
+     "name": "filename_prefix",
+     "type": "STRING",
+     "widget": {
+      "name": "filename_prefix"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "포맷",
+     "name": "format",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "코덱",
+     "name": "format.codec",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format.codec"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "encoding",
+     "name": "format.codec.encoding",
+     "shape": 7,
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format.codec.encoding"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "코덱",
+     "name": "codec",
+     "shape": 7,
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "codec"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "video",
+     "name": "video",
+     "type": "VIDEO",
+     "links": null
+    }
+   ],
+   "title": "Quest360_I2V/stream_wind_360_ambience_4k",
+   "properties": {
+    "Node name for S&R": "SaveVideo",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "Quest360_I2V/stream_wind_360_ambience_4k_cropgen_v1",
+    "mp4",
+    "h264",
+    "auto",
+    "auto"
+   ],
+   "widgets_values_named": {
+    "filename_prefix": "Quest360_I2V/stream_wind_360_ambience_4k_cropgen_v1",
+    "format": "mp4",
+    "format.codec": "h264",
+    "format.codec.encoding": "auto",
+    "codec": "auto"
+   }
+  },
+  {
+   "id": 1158,
+   "type": "SaveVideo",
+   "pos": [
+    5290.024822045174,
+    -332.2275042255253
+   ],
+   "size": [
+    320,
+    150
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "비디오",
+     "name": "video",
+     "type": "VIDEO",
+     "link": null
+    },
+    {
+     "localized_name": "파일명 접두사",
+     "name": "filename_prefix",
+     "type": "STRING",
+     "widget": {
+      "name": "filename_prefix"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "포맷",
+     "name": "format",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "코덱",
+     "name": "format.codec",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format.codec"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "encoding",
+     "name": "format.codec.encoding",
+     "shape": 7,
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format.codec.encoding"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "코덱",
+     "name": "codec",
+     "shape": 7,
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "codec"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "video",
+     "name": "video",
+     "type": "VIDEO",
+     "links": []
+    }
+   ],
+   "title": "Quest360_I2V/stream_wind_360_silent_4k",
+   "properties": {
+    "Node name for S&R": "SaveVideo",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    "Quest360_I2V/stream_wind_360_silent_4k_fixA",
+    "mp4",
+    "h264",
+    "auto",
+    "auto"
+   ],
+   "widgets_values_named": {
+    "filename_prefix": "Quest360_I2V/stream_wind_360_silent_4k_fixA",
+    "format": "mp4",
+    "format.codec": "h264",
+    "format.codec.encoding": "auto",
+    "codec": "auto"
+   }
+  },
+  {
+   "id": 1159,
+   "type": "UNETLoader",
+   "pos": [
+    469.9999301989825,
+    -570.0000678159827
+   ],
+   "size": [
+    270,
+    82
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "UNet 모델 파일명",
+     "name": "unet_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "unet_name"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "가중치 데이터 유형",
+     "name": "weight_dtype",
+     "type": "COMBO",
+     "widget": {
+      "name": "weight_dtype"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "모델",
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      92,
+      155,
+      156
+     ]
+    }
+   ],
+   "title": "LTX-2.3 distilled 1.1 (fp8)",
+   "properties": {
+    "Node name for S&R": "UNETLoader"
+   },
+   "widgets_values": [
+    "ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+    "default"
+   ],
+   "widgets_values_named": {
+    "unet_name": "ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 1160,
+   "type": "VAELoader",
+   "pos": [
+    469.9999301989825,
+    -480.0000678159827
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 16,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "vae 파일명",
+     "name": "vae_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "vae_name"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "VAE",
+     "name": "VAE",
+     "type": "VAE",
+     "links": [
+      93,
+      94,
+      98,
+      118,
+      127,
+      135,
+      162
+     ]
+    }
+   ],
+   "title": "LTX-2.3 video VAE",
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "LTX23_video_vae_bf16.safetensors"
+   ],
+   "widgets_values_named": {
+    "vae_name": "LTX23_video_vae_bf16.safetensors"
+   }
+  },
+  {
+   "id": 1161,
+   "type": "LatentUpscaleModelLoader",
+   "pos": [
+    2159.9998695913036,
+    -70.0001256300111
+   ],
+   "size": [
+    281.74677124023435,
+    58
+   ],
+   "flags": {},
+   "order": 17,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "model_name",
+     "name": "model_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "model_name"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "LATENT_UPSCALE_MODEL",
+     "name": "LATENT_UPSCALE_MODEL",
+     "type": "LATENT_UPSCALE_MODEL",
+     "links": [
+      117
+     ]
+    }
+   ],
+   "title": "LTX-2.3 spatial upscaler x2 1.1",
+   "properties": {
+    "Node name for S&R": "LatentUpscaleModelLoader"
+   },
+   "widgets_values": [
+    "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+   ],
+   "widgets_values_named": {
+    "model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+   }
+  },
+  {
+   "id": 1163,
+   "type": "LTXVImgToVideoInplace",
+   "pos": [
+    2819.9998695913036,
+    -70.0001256300111
+   ],
+   "size": [
+    270,
+    122
+   ],
+   "flags": {},
+   "order": 63,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "vae",
+     "name": "vae",
+     "type": "VAE",
+     "link": 98
+    },
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 99
+    },
+    {
+     "localized_name": "latent",
+     "name": "latent",
+     "type": "LATENT",
+     "link": 119
+    },
+    {
+     "localized_name": "강도",
+     "name": "strength",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "우회",
+     "name": "bypass",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "bypass"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "latent",
+     "name": "latent",
+     "type": "LATENT",
+     "links": [
+      101
+     ]
+    }
+   ],
+   "title": "Stage2: re-anchor first frame",
+   "properties": {
+    "Node name for S&R": "LTXVImgToVideoInplace"
+   },
+   "widgets_values": [
+    1,
+    false
+   ],
+   "widgets_values_named": {
+    "strength": 1,
+    "bypass": false
+   }
+  },
+  {
+   "id": 1164,
+   "type": "LTXVConcatAVLatent",
+   "pos": [
+    3149.9998695913036,
+    -70.0001256300111
+   ],
+   "size": [
+    145.08984375,
+    46
+   ],
+   "flags": {},
+   "order": 64,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "video_latent",
+     "name": "video_latent",
+     "type": "LATENT",
+     "link": 101
+    },
+    {
+     "localized_name": "audio_latent",
+     "name": "audio_latent",
+     "type": "LATENT",
+     "link": 102
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "latent",
+     "name": "latent",
+     "type": "LATENT",
+     "links": [
+      110
+     ]
+    }
+   ],
+   "title": "Stage2 AV concat",
+   "properties": {
+    "Node name for S&R": "LTXVConcatAVLatent"
+   }
+  },
+  {
+   "id": 1165,
+   "type": "ManualSigmas",
+   "pos": [
+    2159.9998695913036,
+    129.9998743699889
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 18,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "시그마",
+     "name": "sigmas",
+     "type": "STRING",
+     "widget": {
+      "name": "sigmas"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "시그마",
+     "name": "SIGMAS",
+     "type": "SIGMAS",
+     "links": [
+      109
+     ]
+    }
+   ],
+   "title": "Stage2 sigmas (refine 3 steps)",
+   "properties": {
+    "Node name for S&R": "ManualSigmas"
+   },
+   "widgets_values": [
+    "0.909375, 0.725, 0.421875, 0.0"
+   ],
+   "widgets_values_named": {
+    "sigmas": "0.909375, 0.725, 0.421875, 0.0"
+   }
+  },
+  {
+   "id": 1166,
+   "type": "CFGGuider",
+   "pos": [
+    2489.9998695913036,
+    129.9998743699889
+   ],
+   "size": [
+    270,
+    98
+   ],
+   "flags": {},
+   "order": 61,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "모델",
+     "name": "model",
+     "type": "MODEL",
+     "link": 156
+    },
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 104
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 105
+    },
+    {
+     "localized_name": "cfg",
+     "name": "cfg",
+     "type": "FLOAT",
+     "widget": {
+      "name": "cfg"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "가이드",
+     "name": "GUIDER",
+     "type": "GUIDER",
+     "links": [
+      107
+     ]
+    }
+   ],
+   "title": "Stage2 guider",
+   "properties": {
+    "Node name for S&R": "CFGGuider"
+   },
+   "widgets_values": [
+    1
+   ],
+   "widgets_values_named": {
+    "cfg": 1
+   }
+  },
+  {
+   "id": 1167,
+   "type": "SamplerCustomAdvanced",
+   "pos": [
+    2819.9998695913036,
+    129.9998743699889
+   ],
+   "size": [
+    180.51239624023438,
+    106
+   ],
+   "flags": {},
+   "order": 65,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "노이즈",
+     "name": "noise",
+     "type": "NOISE",
+     "link": 106
+    },
+    {
+     "localized_name": "가이더",
+     "name": "guider",
+     "type": "GUIDER",
+     "link": 107
+    },
+    {
+     "localized_name": "샘플러",
+     "name": "sampler",
+     "type": "SAMPLER",
+     "link": 108
+    },
+    {
+     "localized_name": "시그마 배열",
+     "name": "sigmas",
+     "type": "SIGMAS",
+     "link": 109
+    },
+    {
+     "localized_name": "잠재 데이터",
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 110
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "출력",
+     "name": "output",
+     "type": "LATENT",
+     "links": null
+    },
+    {
+     "localized_name": "디노이즈 출력",
+     "name": "denoised_output",
+     "type": "LATENT",
+     "links": [
+      111
+     ]
+    }
+   ],
+   "title": "Stage2 sampler",
+   "properties": {
+    "Node name for S&R": "SamplerCustomAdvanced"
+   }
+  },
+  {
+   "id": 1168,
+   "type": "LTXVSeparateAVLatent",
+   "pos": [
+    3149.9998695913036,
+    129.9998743699889
+   ],
+   "size": [
+    163.32421875,
+    46
+   ],
+   "flags": {},
+   "order": 66,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "av_latent",
+     "name": "av_latent",
+     "type": "LATENT",
+     "link": 111
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "video_latent",
+     "name": "video_latent",
+     "type": "LATENT",
+     "links": [
+      112
+     ]
+    },
+    {
+     "localized_name": "audio_latent",
+     "name": "audio_latent",
+     "type": "LATENT",
+     "links": [
+      113
+     ]
+    }
+   ],
+   "title": "Stage2 AV split",
+   "properties": {
+    "Node name for S&R": "LTXVSeparateAVLatent"
+   }
+  },
+  {
+   "id": 1169,
+   "type": "ImageScaleBy",
+   "pos": [
+    4235.024822045174,
+    -217.2275042255253
+   ],
+   "size": [
+    270,
+    82
+   ],
+   "flags": {},
+   "order": 83,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 114
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "배율",
+     "name": "scale_by",
+     "type": "FLOAT",
+     "widget": {
+      "name": "scale_by"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      115
+     ]
+    }
+   ],
+   "title": "Lanczos 2x (no GAN artifacts)",
+   "properties": {
+    "Node name for S&R": "ImageScaleBy"
+   },
+   "widgets_values": [
+    "lanczos",
+    2
+   ],
+   "widgets_values_named": {
+    "upscale_method": "lanczos",
+    "scale_by": 2
+   }
+  },
+  {
+   "id": 1201,
+   "type": "LTXVLatentUpsampler",
+   "pos": [
+    2489.9998695913036,
+    -70.0001256300111
+   ],
+   "size": [
+    187.8501953125,
+    66
+   ],
+   "flags": {},
+   "order": 62,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "샘플",
+     "name": "samples",
+     "type": "LATENT",
+     "link": 116
+    },
+    {
+     "localized_name": "업스케일 모델",
+     "name": "upscale_model",
+     "type": "LATENT_UPSCALE_MODEL",
+     "link": 117
+    },
+    {
+     "localized_name": "vae",
+     "name": "vae",
+     "type": "VAE",
+     "link": 118
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "잠재 데이터",
+     "name": "LATENT",
+     "type": "LATENT",
+     "links": [
+      119
+     ]
+    }
+   ],
+   "title": "Stage2: latent x2 -> 2048x1024",
+   "properties": {
+    "Node name for S&R": "LTXVLatentUpsampler"
+   }
+  },
+  {
+   "id": 1202,
+   "type": "ImageCrop",
+   "pos": [
+    -18.81483164891597,
+    801.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 25,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 120
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      121,
+      122
+     ]
+    }
+   ],
+   "title": "Crop event region from 8K",
+   "properties": {
+    "Node name for S&R": "ImageCrop"
+   },
+   "widgets_values": [
+    4880,
+    2080,
+    640,
+    1320
+   ],
+   "widgets_values_named": {
+    "width": 4880,
+    "height": 2080,
+    "x": 640,
+    "y": 1320
+   }
+  },
+  {
+   "id": 1203,
+   "type": "ImageScale",
+   "pos": [
+    321.18516835108403,
+    801.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 36,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 121
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      123,
+      139
+     ]
+    }
+   ],
+   "title": "Crop -> 2560x1088 (stage2/guide)",
+   "properties": {
+    "Node name for S&R": "ImageScale"
+   },
+   "widgets_values": [
+    "lanczos",
+    2560,
+    1088,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "lanczos",
+    "width": 2560,
+    "height": 1088,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1204,
+   "type": "ImageScale",
+   "pos": [
+    661.185168351084,
+    801.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 37,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 122
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      124
+     ]
+    }
+   ],
+   "title": "Crop -> 1280x544 (stage1)",
+   "properties": {
+    "Node name for S&R": "ImageScale"
+   },
+   "widgets_values": [
+    "lanczos",
+    1280,
+    544,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "lanczos",
+    "width": 1280,
+    "height": 544,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1205,
+   "type": "RepeatImageBatch",
+   "pos": [
+    1001.185168351084,
+    801.5227877840834
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 44,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 124
+    },
+    {
+     "localized_name": "개수",
+     "name": "amount",
+     "type": "INT",
+     "widget": {
+      "name": "amount"
+     },
+     "link": 125
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      126
+     ]
+    }
+   ],
+   "title": "Static crop frames (stage1)",
+   "properties": {
+    "Node name for S&R": "RepeatImageBatch"
+   },
+   "widgets_values": [
+    1
+   ],
+   "widgets_values_named": {
+    "amount": 1
+   }
+  },
+  {
+   "id": 1206,
+   "type": "VAEEncode",
+   "pos": [
+    1341.185168351084,
+    801.5227877840834
+   ],
+   "size": [
+    162.14993286132812,
+    46
+   ],
+   "flags": {},
+   "order": 47,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "픽셀 이미지",
+     "name": "pixels",
+     "type": "IMAGE",
+     "link": 126
+    },
+    {
+     "localized_name": "vae",
+     "name": "vae",
+     "type": "VAE",
+     "link": 127
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "잠재 데이터",
+     "name": "LATENT",
+     "type": "LATENT",
+     "links": [
+      136
+     ]
+    }
+   ],
+   "title": "Encode static crop video",
+   "properties": {
+    "Node name for S&R": "VAEEncode"
+   }
+  },
+  {
+   "id": 1208,
+   "type": "CropMask",
+   "pos": [
+    -18.81483164891597,
+    981.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 40,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "type": "MASK",
+     "link": 158
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "links": [
+      129
+     ]
+    }
+   ],
+   "title": "Mask crop (same region)",
+   "properties": {
+    "Node name for S&R": "CropMask"
+   },
+   "widgets_values": [
+    160,
+    330,
+    1220,
+    520
+   ],
+   "widgets_values_named": {
+    "x": 160,
+    "y": 330,
+    "width": 1220,
+    "height": 520
+   }
+  },
+  {
+   "id": 1209,
+   "type": "MaskToImage",
+   "pos": [
+    321.18516835108403,
+    981.5227877840834
+   ],
+   "size": [
+    176.57489624023438,
+    26
+   ],
+   "flags": {},
+   "order": 45,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "type": "MASK",
+     "link": 129
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      130,
+      132
+     ]
+    }
+   ],
+   "title": "mask->img",
+   "properties": {
+    "Node name for S&R": "MaskToImage"
+   }
+  },
+  {
+   "id": 1210,
+   "type": "ImageScale",
+   "pos": [
+    661.185168351084,
+    981.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 48,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 130
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      131
+     ]
+    }
+   ],
+   "title": "mask 1280x544",
+   "properties": {
+    "Node name for S&R": "ImageScale"
+   },
+   "widgets_values": [
+    "bilinear",
+    1280,
+    544,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "bilinear",
+    "width": 1280,
+    "height": 544,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1211,
+   "type": "ImageToMask",
+   "pos": [
+    1001.185168351084,
+    981.5227877840834
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 51,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 131
+    },
+    {
+     "localized_name": "채널",
+     "name": "channel",
+     "type": "COMBO",
+     "widget": {
+      "name": "channel"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "links": [
+      134
+     ]
+    }
+   ],
+   "title": "mask1280",
+   "properties": {
+    "Node name for S&R": "ImageToMask"
+   },
+   "widgets_values": [
+    "red"
+   ],
+   "widgets_values_named": {
+    "channel": "red"
+   }
+  },
+  {
+   "id": 1212,
+   "type": "ImageScale",
+   "pos": [
+    1341.185168351084,
+    981.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 49,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 132
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      133
+     ]
+    }
+   ],
+   "title": "mask 2560x1088",
+   "properties": {
+    "Node name for S&R": "ImageScale"
+   },
+   "widgets_values": [
+    "bilinear",
+    2560,
+    1088,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "bilinear",
+    "width": 2560,
+    "height": 1088,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1213,
+   "type": "ImageToMask",
+   "pos": [
+    1681.185168351084,
+    981.5227877840834
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 52,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 133
+    },
+    {
+     "localized_name": "채널",
+     "name": "channel",
+     "type": "COMBO",
+     "widget": {
+      "name": "channel"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "links": [
+      143
+     ]
+    }
+   ],
+   "title": "mask2560",
+   "properties": {
+    "Node name for S&R": "ImageToMask"
+   },
+   "widgets_values": [
+    "red"
+   ],
+   "widgets_values_named": {
+    "channel": "red"
+   }
+  },
+  {
+   "id": 1214,
+   "type": "LTXVPreprocessMasks",
+   "pos": [
+    -18.81483164891597,
+    1161.5227877840834
+   ],
+   "size": [
+    306.5845703125,
+    222
+   ],
+   "flags": {},
+   "order": 53,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "masks",
+     "name": "masks",
+     "type": "MASK",
+     "link": 134
+    },
+    {
+     "localized_name": "vae",
+     "name": "vae",
+     "type": "VAE",
+     "link": 135
+    },
+    {
+     "localized_name": "invert_input_masks",
+     "name": "invert_input_masks",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "invert_input_masks"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "ignore_first_mask",
+     "name": "ignore_first_mask",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "ignore_first_mask"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "pooling_method",
+     "name": "pooling_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "pooling_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "grow_mask",
+     "name": "grow_mask",
+     "type": "INT",
+     "widget": {
+      "name": "grow_mask"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "tapered_corners",
+     "name": "tapered_corners",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "tapered_corners"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clamp_min",
+     "name": "clamp_min",
+     "type": "FLOAT",
+     "widget": {
+      "name": "clamp_min"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clamp_max",
+     "name": "clamp_max",
+     "type": "FLOAT",
+     "widget": {
+      "name": "clamp_max"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "links": [
+      137
+     ]
+    }
+   ],
+   "title": "Mask -> latent",
+   "properties": {
+    "Node name for S&R": "LTXVPreprocessMasks"
+   },
+   "widgets_values": [
+    false,
+    false,
+    "max",
+    0,
+    true,
+    0,
+    1
+   ],
+   "widgets_values_named": {
+    "invert_input_masks": false,
+    "ignore_first_mask": false,
+    "pooling_method": "max",
+    "grow_mask": 0,
+    "tapered_corners": true,
+    "clamp_min": 0,
+    "clamp_max": 1
+   }
+  },
+  {
+   "id": 1215,
+   "type": "LTXVSetVideoLatentNoiseMasks",
+   "pos": [
+    321.18516835108403,
+    1161.5227877840834
+   ],
+   "size": [
+    322.33359375,
+    46
+   ],
+   "flags": {},
+   "order": 54,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "samples",
+     "name": "samples",
+     "type": "LATENT",
+     "link": 136
+    },
+    {
+     "localized_name": "masks",
+     "name": "masks",
+     "type": "MASK",
+     "link": 137
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "잠재 데이터",
+     "name": "LATENT",
+     "type": "LATENT",
+     "links": [
+      138
+     ]
+    }
+   ],
+   "title": "Generate only inside mask",
+   "properties": {
+    "Node name for S&R": "LTXVSetVideoLatentNoiseMasks"
+   }
+  },
+  {
+   "id": 1216,
+   "type": "RepeatImageBatch",
+   "pos": [
+    661.185168351084,
+    1161.5227877840834
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 43,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 139
+    },
+    {
+     "localized_name": "개수",
+     "name": "amount",
+     "type": "INT",
+     "widget": {
+      "name": "amount"
+     },
+     "link": 140
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      141
+     ]
+    }
+   ],
+   "title": "Static crop frames 2560",
+   "properties": {
+    "Node name for S&R": "RepeatImageBatch"
+   },
+   "widgets_values": [
+    1
+   ],
+   "widgets_values_named": {
+    "amount": 1
+   }
+  },
+  {
+   "id": 1217,
+   "type": "ImageCompositeMasked",
+   "pos": [
+    1001.185168351084,
+    1161.5227877840834
+   ],
+   "size": [
+    270,
+    146
+   ],
+   "flags": {},
+   "order": 70,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "대상",
+     "name": "destination",
+     "type": "IMAGE",
+     "link": 141
+    },
+    {
+     "localized_name": "원본",
+     "name": "source",
+     "type": "IMAGE",
+     "link": 142
+    },
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": 143
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "원본 크기 조정",
+     "name": "resize_source",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "resize_source"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      144,
+      150,
+      151
+     ]
+    }
+   ],
+   "title": "Restore photo outside mask",
+   "properties": {
+    "Node name for S&R": "ImageCompositeMasked"
+   },
+   "widgets_values": [
+    0,
+    0,
+    false
+   ],
+   "widgets_values_named": {
+    "x": 0,
+    "y": 0,
+    "resize_source": false
+   }
+  },
+  {
+   "id": 1219,
+   "type": "ImageScale",
+   "pos": [
+    1341.185168351084,
+    1161.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 73,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 144
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      149
+     ]
+    }
+   ],
+   "title": "Crop -> 4K size 2440x1040",
+   "properties": {
+    "Node name for S&R": "ImageScale"
+   },
+   "widgets_values": [
+    "lanczos",
+    2440,
+    1040,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "lanczos",
+    "width": 2440,
+    "height": 1040,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1218,
+   "type": "ImageScale",
+   "pos": [
+    1681.185168351084,
+    1161.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 26,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 145
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      146
+     ]
+    }
+   ],
+   "title": "8K photo -> 4096x2048",
+   "properties": {
+    "Node name for S&R": "ImageScale"
+   },
+   "widgets_values": [
+    "lanczos",
+    4096,
+    2048,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "lanczos",
+    "width": 4096,
+    "height": 2048,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1220,
+   "type": "RepeatImageBatch",
+   "pos": [
+    -18.81483164891597,
+    1341.5227877840834
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 38,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 146
+    },
+    {
+     "localized_name": "개수",
+     "name": "amount",
+     "type": "INT",
+     "widget": {
+      "name": "amount"
+     },
+     "link": 147
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      148
+     ]
+    }
+   ],
+   "title": "Static 4K frames",
+   "properties": {
+    "Node name for S&R": "RepeatImageBatch"
+   },
+   "widgets_values": [
+    1
+   ],
+   "widgets_values_named": {
+    "amount": 1
+   }
+  },
+  {
+   "id": 1221,
+   "type": "ImageCompositeMasked",
+   "pos": [
+    321.18516835108403,
+    1341.5227877840834
+   ],
+   "size": [
+    270,
+    146
+   ],
+   "flags": {},
+   "order": 75,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "대상",
+     "name": "destination",
+     "type": "IMAGE",
+     "link": 148
+    },
+    {
+     "localized_name": "원본",
+     "name": "source",
+     "type": "IMAGE",
+     "link": 149
+    },
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": null
+    },
+    {
+     "localized_name": "x",
+     "name": "x",
+     "type": "INT",
+     "widget": {
+      "name": "x"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "y",
+     "name": "y",
+     "type": "INT",
+     "widget": {
+      "name": "y"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "원본 크기 조정",
+     "name": "resize_source",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "resize_source"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": []
+    }
+   ],
+   "title": "(꺼짐) 4K 360 붙이기는 사이트 서버가 ffmpeg 로 함 (event_compose.py)",
+   "properties": {
+    "Node name for S&R": "ImageCompositeMasked"
+   },
+   "widgets_values": [
+    320,
+    660,
+    false
+   ],
+   "widgets_values_named": {
+    "x": 320,
+    "y": 660,
+    "resize_source": false
+   }
+  },
+  {
+   "id": 1222,
+   "type": "MaskToImage",
+   "pos": [
+    661.185168351084,
+    1341.5227877840834
+   ],
+   "size": [
+    176.57489624023438,
+    26
+   ],
+   "flags": {},
+   "order": 41,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "마스크",
+     "name": "mask",
+     "type": "MASK",
+     "link": 159
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      153
+     ]
+    }
+   ],
+   "title": "full mask->img",
+   "properties": {
+    "Node name for S&R": "MaskToImage"
+   }
+  },
+  {
+   "id": 1223,
+   "type": "ImageScale",
+   "pos": [
+    1001.185168351084,
+    1341.5227877840834
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 46,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 153
+    },
+    {
+     "localized_name": "확대 방법",
+     "name": "upscale_method",
+     "type": "COMBO",
+     "widget": {
+      "name": "upscale_method"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "너비",
+     "name": "width",
+     "type": "INT",
+     "widget": {
+      "name": "width"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "높이",
+     "name": "height",
+     "type": "INT",
+     "widget": {
+      "name": "height"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "자르기",
+     "name": "crop",
+     "type": "COMBO",
+     "widget": {
+      "name": "crop"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      154
+     ]
+    }
+   ],
+   "title": "Unity mask 4096x2048",
+   "properties": {
+    "Node name for S&R": "ImageScale"
+   },
+   "widgets_values": [
+    "bilinear",
+    4096,
+    2048,
+    "disabled"
+   ],
+   "widgets_values_named": {
+    "upscale_method": "bilinear",
+    "width": 4096,
+    "height": 2048,
+    "crop": "disabled"
+   }
+  },
+  {
+   "id": 1224,
+   "type": "SaveImage",
+   "pos": [
+    1341.185168351084,
+    1341.5227877840834
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 50,
+   "mode": 2,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "images",
+     "type": "IMAGE",
+     "link": 154
+    },
+    {
+     "localized_name": "파일명 접두사",
+     "name": "filename_prefix",
+     "type": "STRING",
+     "widget": {
+      "name": "filename_prefix"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "images",
+     "name": "images",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "title": "Save Unity event mask",
+   "properties": {},
+   "widgets_values": [
+    "Quest360_I2V/stream_wind_360_event_mask"
+   ],
+   "widgets_values_named": {
+    "filename_prefix": "Quest360_I2V/stream_wind_360_event_mask"
+   }
+  },
+  {
+   "id": 1162,
+   "type": "LoadImage",
+   "pos": [
+    1681.185168351084,
+    801.5227877840834
+   ],
+   "size": [
+    270,
+    102
+   ],
+   "flags": {},
+   "order": 19,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "COMBO",
+     "widget": {
+      "name": "image"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "업로드할 파일 선택",
+     "name": "upload",
+     "type": "IMAGEUPLOAD",
+     "widget": {
+      "name": "upload"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "이미지",
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      157
+     ]
+    },
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "links": null
+    }
+   ],
+   "title": "Event mask (painted, 2048x1024)",
+   "properties": {
+    "Node name for S&R": "LoadImage"
+   },
+   "widgets_values": [
+    "d7269f1026d804b673879074d46771e33e8bf1d7b2acd915ec9084c67e269cf4.png",
+    "image"
+   ],
+   "widgets_values_named": {
+    "image": "d7269f1026d804b673879074d46771e33e8bf1d7b2acd915ec9084c67e269cf4.png",
+    "upload": "image"
+   }
+  },
+  {
+   "id": 1225,
+   "type": "ImageToMask",
+   "pos": [
+    1941.185168351084,
+    801.5227877840834
+   ],
+   "size": [
+    270,
+    58
+   ],
+   "flags": {},
+   "order": 29,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 157
+    },
+    {
+     "localized_name": "채널",
+     "name": "channel",
+     "type": "COMBO",
+     "widget": {
+      "name": "channel"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "마스크",
+     "name": "MASK",
+     "type": "MASK",
+     "links": [
+      158,
+      159
+     ]
+    }
+   ],
+   "title": "painted mask -> MASK",
+   "properties": {
+    "Node name for S&R": "ImageToMask"
+   },
+   "widgets_values": [
+    "red"
+   ],
+   "widgets_values_named": {
+    "channel": "red"
+   }
+  },
+  {
+   "id": 1226,
+   "type": "LTXVAddGuide",
+   "pos": [
+    2449.9996757000185,
+    929.9998928802352
+   ],
+   "size": [
+    280,
+    240
+   ],
+   "flags": {},
+   "order": 55,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 160
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 161
+    },
+    {
+     "localized_name": "vae",
+     "name": "vae",
+     "type": "VAE",
+     "link": 162
+    },
+    {
+     "localized_name": "잠재 비디오",
+     "name": "latent",
+     "type": "LATENT",
+     "link": 163
+    },
+    {
+     "localized_name": "이미지",
+     "name": "image",
+     "type": "IMAGE",
+     "link": 164
+    },
+    {
+     "localized_name": "attention_mask",
+     "name": "attention_mask",
+     "shape": 7,
+     "type": "MASK",
+     "link": null
+    },
+    {
+     "localized_name": "iclora_parameters",
+     "name": "iclora_parameters",
+     "shape": 7,
+     "type": "IC_LORA_PARAMETERS",
+     "link": null
+    },
+    {
+     "localized_name": "프레임 번호",
+     "name": "frame_idx",
+     "type": "INT",
+     "widget": {
+      "name": "frame_idx"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "강도",
+     "name": "strength",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "긍정 조건",
+     "name": "positive",
+     "type": "CONDITIONING",
+     "links": [
+      5,
+      25
+     ]
+    },
+    {
+     "localized_name": "부정 조건",
+     "name": "negative",
+     "type": "CONDITIONING",
+     "links": [
+      6,
+      26
+     ]
+    },
+    {
+     "localized_name": "잠재 비디오",
+     "name": "latent",
+     "type": "LATENT",
+     "links": [
+      27
+     ]
+    }
+   ],
+   "title": "I2V - last frame = photo (끝은 첫 화면으로)",
+   "properties": {
+    "Node name for S&R": "LTXVAddGuide",
+    "cnr_id": "comfy-core"
+   },
+   "widgets_values": [
+    -1,
+    1.0
+   ],
+   "widgets_values_named": {
+    "frame_idx": -1,
+    "strength": 1.0
+   }
+  }
+ ],
+ "links": [
+  [
+   2,
+   1126,
+   0,
+   1101,
+   0,
+   "VAE"
+  ],
+  [
+   3,
+   1114,
+   0,
+   1101,
+   2,
+   "INT"
+  ],
+  [
+   5,
+   1226,
+   0,
+   1106,
+   0,
+   "CONDITIONING"
+  ],
+  [
+   6,
+   1226,
+   1,
+   1106,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   7,
+   1121,
+   0,
+   1106,
+   2,
+   "LATENT"
+  ],
+  [
+   10,
+   1128,
+   0,
+   1109,
+   0,
+   "CONDITIONING"
+  ],
+  [
+   11,
+   1112,
+   0,
+   1109,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   12,
+   1123,
+   0,
+   1109,
+   2,
+   "FLOAT"
+  ],
+  [
+   13,
+   1125,
+   0,
+   1110,
+   0,
+   "IMAGE,MASK"
+  ],
+  [
+   19,
+   1109,
+   0,
+   1115,
+   0,
+   "CONDITIONING"
+  ],
+  [
+   20,
+   1109,
+   1,
+   1115,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   23,
+   1104,
+   0,
+   1115,
+   4,
+   "IMAGE"
+  ],
+  [
+   25,
+   1226,
+   0,
+   1116,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   26,
+   1226,
+   1,
+   1116,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   27,
+   1226,
+   2,
+   1119,
+   0,
+   "LATENT"
+  ],
+  [
+   28,
+   1101,
+   0,
+   1119,
+   1,
+   "LATENT"
+  ],
+  [
+   29,
+   1100,
+   0,
+   1120,
+   0,
+   "NOISE"
+  ],
+  [
+   30,
+   1116,
+   0,
+   1120,
+   1,
+   "GUIDER"
+  ],
+  [
+   31,
+   1117,
+   0,
+   1120,
+   2,
+   "SAMPLER"
+  ],
+  [
+   32,
+   1118,
+   0,
+   1120,
+   3,
+   "SIGMAS"
+  ],
+  [
+   33,
+   1119,
+   0,
+   1120,
+   4,
+   "LATENT"
+  ],
+  [
+   39,
+   1103,
+   0,
+   1112,
+   0,
+   "CLIP"
+  ],
+  [
+   41,
+   1107,
+   0,
+   1122,
+   1,
+   "AUDIO"
+  ],
+  [
+   42,
+   1123,
+   0,
+   1122,
+   2,
+   "FLOAT"
+  ],
+  [
+   46,
+   1126,
+   0,
+   1107,
+   1,
+   "VAE"
+  ],
+  [
+   47,
+   1120,
+   1,
+   1121,
+   0,
+   "LATENT"
+  ],
+  [
+   48,
+   1103,
+   0,
+   1128,
+   0,
+   "CLIP"
+  ],
+  [
+   51,
+   1130,
+   1,
+   1101,
+   1,
+   "INT"
+  ],
+  [
+   52,
+   1130,
+   1,
+   1108,
+   2,
+   "INT"
+  ],
+  [
+   57,
+   1134,
+   0,
+   1135,
+   0,
+   "MASK"
+  ],
+  [
+   58,
+   1133,
+   0,
+   1136,
+   0,
+   "MASK"
+  ],
+  [
+   59,
+   1135,
+   0,
+   1136,
+   1,
+   "MASK"
+  ],
+  [
+   63,
+   1125,
+   0,
+   1140,
+   0,
+   "IMAGE,MASK"
+  ],
+  [
+   64,
+   1140,
+   0,
+   1141,
+   0,
+   "IMAGE"
+  ],
+  [
+   65,
+   1105,
+   0,
+   1141,
+   1,
+   "IMAGE"
+  ],
+  [
+   72,
+   1141,
+   0,
+   1145,
+   0,
+   "IMAGE"
+  ],
+  [
+   73,
+   1141,
+   0,
+   1146,
+   0,
+   "IMAGE"
+  ],
+  [
+   74,
+   1147,
+   0,
+   1148,
+   0,
+   "IMAGE"
+  ],
+  [
+   75,
+   1145,
+   0,
+   1148,
+   1,
+   "IMAGE"
+  ],
+  [
+   76,
+   1148,
+   0,
+   1149,
+   0,
+   "IMAGE"
+  ],
+  [
+   77,
+   1141,
+   0,
+   1149,
+   1,
+   "IMAGE"
+  ],
+  [
+   78,
+   1149,
+   0,
+   1150,
+   0,
+   "IMAGE"
+  ],
+  [
+   79,
+   1146,
+   0,
+   1150,
+   1,
+   "IMAGE"
+  ],
+  [
+   80,
+   1151,
+   0,
+   1152,
+   0,
+   "UPSCALE_MODEL"
+  ],
+  [
+   81,
+   1150,
+   0,
+   1152,
+   1,
+   "IMAGE"
+  ],
+  [
+   88,
+   1131,
+   0,
+   1125,
+   0,
+   "IMAGE"
+  ],
+  [
+   89,
+   1130,
+   1,
+   1140,
+   1,
+   "INT"
+  ],
+  [
+   91,
+   1136,
+   0,
+   1141,
+   2,
+   "MASK"
+  ],
+  [
+   90,
+   1130,
+   1,
+   1147,
+   2,
+   "INT"
+  ],
+  [
+   34,
+   1114,
+   0,
+   1123,
+   0,
+   "INT"
+  ],
+  [
+   49,
+   1102,
+   0,
+   1130,
+   0,
+   "INT"
+  ],
+  [
+   50,
+   1114,
+   0,
+   1130,
+   1,
+   "INT"
+  ],
+  [
+   85,
+   1154,
+   0,
+   1155,
+   0,
+   "VIDEO"
+  ],
+  [
+   86,
+   1122,
+   0,
+   1156,
+   0,
+   "VIDEO"
+  ],
+  [
+   92,
+   1159,
+   0,
+   1132,
+   0,
+   "MODEL"
+  ],
+  [
+   93,
+   1160,
+   0,
+   1115,
+   2,
+   "VAE"
+  ],
+  [
+   94,
+   1160,
+   0,
+   1105,
+   1,
+   "VAE"
+  ],
+  [
+   98,
+   1160,
+   0,
+   1163,
+   0,
+   "VAE"
+  ],
+  [
+   99,
+   1104,
+   0,
+   1163,
+   1,
+   "IMAGE"
+  ],
+  [
+   101,
+   1163,
+   0,
+   1164,
+   0,
+   "LATENT"
+  ],
+  [
+   102,
+   1121,
+   1,
+   1164,
+   1,
+   "LATENT"
+  ],
+  [
+   104,
+   1106,
+   0,
+   1166,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   105,
+   1106,
+   1,
+   1166,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   106,
+   1100,
+   0,
+   1167,
+   0,
+   "NOISE"
+  ],
+  [
+   107,
+   1166,
+   0,
+   1167,
+   1,
+   "GUIDER"
+  ],
+  [
+   108,
+   1117,
+   0,
+   1167,
+   2,
+   "SAMPLER"
+  ],
+  [
+   109,
+   1165,
+   0,
+   1167,
+   3,
+   "SIGMAS"
+  ],
+  [
+   110,
+   1164,
+   0,
+   1167,
+   4,
+   "LATENT"
+  ],
+  [
+   111,
+   1167,
+   1,
+   1168,
+   0,
+   "LATENT"
+  ],
+  [
+   112,
+   1168,
+   0,
+   1105,
+   0,
+   "LATENT"
+  ],
+  [
+   113,
+   1168,
+   1,
+   1107,
+   0,
+   "LATENT"
+  ],
+  [
+   114,
+   1150,
+   0,
+   1169,
+   0,
+   "IMAGE"
+  ],
+  [
+   115,
+   1169,
+   0,
+   1153,
+   0,
+   "IMAGE"
+  ],
+  [
+   116,
+   1106,
+   2,
+   1201,
+   0,
+   "LATENT"
+  ],
+  [
+   117,
+   1161,
+   0,
+   1201,
+   1,
+   "LATENT_UPSCALE_MODEL"
+  ],
+  [
+   118,
+   1160,
+   0,
+   1201,
+   2,
+   "VAE"
+  ],
+  [
+   119,
+   1201,
+   0,
+   1163,
+   2,
+   "LATENT"
+  ],
+  [
+   120,
+   1131,
+   0,
+   1202,
+   0,
+   "IMAGE"
+  ],
+  [
+   121,
+   1202,
+   0,
+   1203,
+   0,
+   "IMAGE"
+  ],
+  [
+   122,
+   1202,
+   0,
+   1204,
+   0,
+   "IMAGE"
+  ],
+  [
+   123,
+   1203,
+   0,
+   1104,
+   0,
+   "IMAGE"
+  ],
+  [
+   124,
+   1204,
+   0,
+   1205,
+   0,
+   "IMAGE"
+  ],
+  [
+   125,
+   1130,
+   1,
+   1205,
+   1,
+   "INT"
+  ],
+  [
+   126,
+   1205,
+   0,
+   1206,
+   0,
+   "IMAGE"
+  ],
+  [
+   127,
+   1160,
+   0,
+   1206,
+   1,
+   "VAE"
+  ],
+  [
+   129,
+   1208,
+   0,
+   1209,
+   0,
+   "MASK"
+  ],
+  [
+   130,
+   1209,
+   0,
+   1210,
+   0,
+   "IMAGE"
+  ],
+  [
+   131,
+   1210,
+   0,
+   1211,
+   0,
+   "IMAGE"
+  ],
+  [
+   132,
+   1209,
+   0,
+   1212,
+   0,
+   "IMAGE"
+  ],
+  [
+   133,
+   1212,
+   0,
+   1213,
+   0,
+   "IMAGE"
+  ],
+  [
+   134,
+   1211,
+   0,
+   1214,
+   0,
+   "MASK"
+  ],
+  [
+   135,
+   1160,
+   0,
+   1214,
+   1,
+   "VAE"
+  ],
+  [
+   136,
+   1206,
+   0,
+   1215,
+   0,
+   "LATENT"
+  ],
+  [
+   137,
+   1214,
+   0,
+   1215,
+   1,
+   "MASK"
+  ],
+  [
+   138,
+   1215,
+   0,
+   1115,
+   3,
+   "LATENT"
+  ],
+  [
+   139,
+   1203,
+   0,
+   1216,
+   0,
+   "IMAGE"
+  ],
+  [
+   140,
+   1130,
+   1,
+   1216,
+   1,
+   "INT"
+  ],
+  [
+   141,
+   1216,
+   0,
+   1217,
+   0,
+   "IMAGE"
+  ],
+  [
+   142,
+   1105,
+   0,
+   1217,
+   1,
+   "IMAGE"
+  ],
+  [
+   143,
+   1213,
+   0,
+   1217,
+   2,
+   "MASK"
+  ],
+  [
+   144,
+   1217,
+   0,
+   1219,
+   0,
+   "IMAGE"
+  ],
+  [
+   145,
+   1131,
+   0,
+   1218,
+   0,
+   "IMAGE"
+  ],
+  [
+   146,
+   1218,
+   0,
+   1220,
+   0,
+   "IMAGE"
+  ],
+  [
+   147,
+   1130,
+   1,
+   1220,
+   1,
+   "INT"
+  ],
+  [
+   148,
+   1220,
+   0,
+   1221,
+   0,
+   "IMAGE"
+  ],
+  [
+   149,
+   1219,
+   0,
+   1221,
+   1,
+   "IMAGE"
+  ],
+  [
+   150,
+   1217,
+   0,
+   1154,
+   0,
+   "IMAGE"
+  ],
+  [
+   151,
+   1217,
+   0,
+   1122,
+   0,
+   "IMAGE"
+  ],
+  [
+   153,
+   1222,
+   0,
+   1223,
+   0,
+   "IMAGE"
+  ],
+  [
+   154,
+   1223,
+   0,
+   1224,
+   0,
+   "IMAGE"
+  ],
+  [
+   155,
+   1159,
+   0,
+   1116,
+   0,
+   "MODEL"
+  ],
+  [
+   156,
+   1159,
+   0,
+   1166,
+   0,
+   "MODEL"
+  ],
+  [
+   157,
+   1162,
+   0,
+   1225,
+   0,
+   "IMAGE"
+  ],
+  [
+   158,
+   1225,
+   0,
+   1208,
+   0,
+   "MASK"
+  ],
+  [
+   159,
+   1225,
+   0,
+   1222,
+   0,
+   "MASK"
+  ],
+  [
+   160,
+   1115,
+   0,
+   1226,
+   0,
+   "CONDITIONING"
+  ],
+  [
+   161,
+   1115,
+   1,
+   1226,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   162,
+   1160,
+   0,
+   1226,
+   2,
+   "VAE"
+  ],
+  [
+   163,
+   1115,
+   2,
+   1226,
+   3,
+   "LATENT"
+  ],
+  [
+   164,
+   1104,
+   0,
+   1226,
+   4,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {
+  "ds": {
+   "scale": 1.064800000000019,
+   "offset": [
+    -3847.801245846007,
+    635.2906970807824
+   ]
+  },
+  "frontendVersion": "1.57.0",
+  "VHS_KeepIntermediate": true,
+  "VHS_MetadataImage": true,
+  "VHS_latentpreview": false,
+  "VHS_latentpreviewrate": 0
+ },
+ "version": 0.4
+}

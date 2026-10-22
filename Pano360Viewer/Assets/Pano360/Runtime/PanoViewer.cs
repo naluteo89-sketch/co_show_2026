@@ -41,6 +41,14 @@ namespace Pano360
         public bool eventRepeat = true;
         [Tooltip("다시 재생하기까지 사진만 보여 주는 시간 (초)")]
         public float eventInterval = 8f;
+        [Tooltip("켜면 사진 → 영상으로 바뀐 뒤 영상 마지막 장면에서 멈춤 (사진으로 돌아가지 않음, 반복 없음)")]
+        public bool eventEndOnVideo = false;
+        [Tooltip("끝날 때 범위 마스크를 가장자리부터 안쪽으로 지우며 사진으로 돌아옴 (마스크가 있을 때). 끄면 전체가 한 번에 흐려지며 전환")]
+        public bool eventWipeOut = true;
+        [Tooltip("지우며 돌아오는 시간 (초). 영상이 끝나기 이만큼 전에 시작")]
+        public float eventWipeDuration = 2.5f;
+        [Tooltip("지워지는 경계 불규칙함 (0 = 매끈, 0.5 = 물결처럼)")]
+        [Range(0f, 0.6f)] public float eventWipeIrregularity = 0.25f;
         [Tooltip("범위 마스크(이름_event_mask.png) 경계 부드럽기. 밉맵 단계 0=딱딱 3≈1.4° 5≈5.6°")]
         [Range(0f, 6f)] public float eventMaskSoftness = 3f;
 
@@ -67,7 +75,9 @@ namespace Pano360
         float fade = 1f;
         Coroutine eventCo;               // 사진 위 사건 영상 반복
         bool eventPlaying;
+        bool eventHeld;                  // 영상 마지막 장면에서 멈춘 상태 (헤드셋을 다시 써도 재생 안 함)
         Texture2D eventMask;             // 사건 영상 범위 (흰색만 영상, 나머지는 고화질 사진)
+        Texture2D eventWipeField;        // 범위 가장자리부터의 거리 (끝날 때 벗겨지는 순서)
 
         static readonly int MainTexId = Shader.PropertyToID("_MainTex");
         static readonly int StereoId = Shader.PropertyToID("_Stereo");
@@ -77,6 +87,9 @@ namespace Pano360
         static readonly int BlendMaskId = Shader.PropertyToID("_BlendMask");
         static readonly int UseBlendMaskId = Shader.PropertyToID("_UseBlendMask");
         static readonly int MaskLodId = Shader.PropertyToID("_MaskLod");
+        static readonly int WipeId = Shader.PropertyToID("_Wipe");
+        static readonly int WipeNoiseId = Shader.PropertyToID("_WipeNoise");
+        static readonly int WipeFieldId = Shader.PropertyToID("_WipeField");
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void AutoCreate()
@@ -350,10 +363,39 @@ namespace Pano360
                 while (videoPlayer.frame < 1 && Time.realtimeSinceStartup - tw < 3f) yield return null;
                 yield return BlendTo(1f);
 
-                // 끝나기 직전에 영상 → 사진
                 double len = videoPlayer.length;
-                while (videoPlayer.isPlaying && videoPlayer.time < len - eventCrossfade) yield return null;
-                yield return BlendTo(0f);
+                if (eventEndOnVideo)
+                {
+                    // 영상으로 끝냄: 마지막 장면 직전에 멈춰 그대로 둠 (끝까지 가면 화면이 비는 기기가 있어 2프레임 앞에서 멈춤)
+                    double stopAt = len - 2.0 / Mathf.Max(1f, (float)videoPlayer.frameRate);
+                    while (videoPlayer.isPlaying && videoPlayer.time < stopAt) yield return null;
+                    videoPlayer.Pause();
+                    eventHeld = true;
+                    eventCo = null;
+                    yield break;
+                }
+                if (eventWipeOut && eventMask != null)
+                {
+                    // 범위를 가장자리부터 지우며 사진으로 (물이 빠지듯) — 영상이 아직 움직이는 동안 진행
+                    float dur = Mathf.Clamp(eventWipeDuration, 0.2f, (float)len * 0.8f);
+                    while (videoPlayer.isPlaying && videoPlayer.time < len - dur - 0.05) yield return null;
+                    mat.SetFloat(WipeNoiseId, eventWipeIrregularity);
+                    float wipe = 0f, wipeStart = Time.time;
+                    while (wipe < 1f)
+                    {
+                        wipe = Mathf.Clamp01((Time.time - wipeStart) / dur);
+                        mat.SetFloat(WipeId, Mathf.SmoothStep(0f, 1f, wipe));
+                        yield return null;
+                    }
+                    mat.SetFloat(BlendId, 0f);
+                    mat.SetFloat(WipeId, 0f);
+                }
+                else
+                {
+                    // 끝나기 직전에 영상 → 사진
+                    while (videoPlayer.isPlaying && videoPlayer.time < len - eventCrossfade) yield return null;
+                    yield return BlendTo(0f);
+                }
                 videoPlayer.Stop();
                 eventPlaying = false;
 
@@ -388,6 +430,7 @@ namespace Pano360
                 var bytes = new byte[px.Length];
                 for (int k = 0; k < px.Length; k++) bytes[k] = alphaOnly ? px[k].a : px[k].r;
                 var tex = new Texture2D(src.width, src.height, TextureFormat.R8, true, true);
+                eventWipeField = BuildWipeField(bytes, src.width, src.height);
                 Destroy(src);
                 tex.SetPixelData(bytes, 0);
                 tex.wrapModeU = TextureWrapMode.Repeat;    // 360 좌우가 이어짐
@@ -397,14 +440,56 @@ namespace Pano360
                 eventMask = tex;
             }
             mat.SetTexture(BlendMaskId, eventMask);
+            mat.SetTexture(WipeFieldId, eventWipeField);
             mat.SetFloat(MaskLodId, eventMaskSoftness);
             mat.SetFloat(UseBlendMaskId, 1f);
         }
 
         void ReleaseEventMask()
         {
-            if (mat != null) { mat.SetFloat(UseBlendMaskId, 0f); mat.SetTexture(BlendMaskId, null); }
+            if (mat != null) { mat.SetFloat(UseBlendMaskId, 0f); mat.SetTexture(BlendMaskId, null); mat.SetTexture(WipeFieldId, null); }
             if (eventMask != null) { Destroy(eventMask); eventMask = null; }
+            if (eventWipeField != null) { Destroy(eventWipeField); eventWipeField = null; }
+        }
+
+        /// 마스크 → 256x128 에서 가장자리까지 거리(체임퍼) → 0~1. 문턱을 올리면 끝부분부터 안쪽으로 벗겨짐
+        static Texture2D BuildWipeField(byte[] mask, int w, int h)
+        {
+            const int W = 256, H = 128;
+            var d = new float[W * H];
+            const float INF = 1e9f;
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    // 칸 안의 마스크 평균 (상자 축소)
+                    int x0 = x * w / W, x1 = Mathf.Max(x0 + 1, (x + 1) * w / W), y0 = y * h / H, y1 = Mathf.Max(y0 + 1, (y + 1) * h / H);
+                    int sum = 0, cnt = 0;
+                    for (int yy = y0; yy < y1; yy += 2)
+                        for (int xx = x0; xx < x1; xx += 2) { sum += mask[yy * w + xx]; cnt++; }
+                    d[y * W + x] = sum > cnt * 127 ? INF : 0f;
+                }
+            float D(int x, int y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0f : d[y * W + x];
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = y * W + x; if (d[i] == 0f) continue;
+                    d[i] = Mathf.Min(d[i], Mathf.Min(Mathf.Min(D(x - 1, y - 1) + 1.414f, D(x, y - 1) + 1f), Mathf.Min(D(x + 1, y - 1) + 1.414f, D(x - 1, y) + 1f)));
+                }
+            for (int y = H - 1; y >= 0; y--)
+                for (int x = W - 1; x >= 0; x--)
+                {
+                    int i = y * W + x; if (d[i] == 0f) continue;
+                    d[i] = Mathf.Min(d[i], Mathf.Min(Mathf.Min(D(x + 1, y + 1) + 1.414f, D(x, y + 1) + 1f), Mathf.Min(D(x - 1, y + 1) + 1.414f, D(x + 1, y) + 1f)));
+                }
+            float max = 1e-3f;
+            for (int i = 0; i < d.Length; i++) if (d[i] < INF) max = Mathf.Max(max, d[i]);
+            var outBytes = new byte[W * H];
+            for (int i = 0; i < d.Length; i++) outBytes[i] = (byte)Mathf.RoundToInt(Mathf.Clamp01(d[i] / max) * 255f);
+            var tex = new Texture2D(W, H, TextureFormat.R8, false, true)
+            { wrapModeU = TextureWrapMode.Repeat, wrapModeV = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            tex.SetPixelData(outBytes, 0);
+            tex.Apply(false, true);
+            return tex;
         }
 
         IEnumerator BlendTo(float target)
@@ -421,7 +506,8 @@ namespace Pano360
         void StopEvent()
         {
             if (eventCo != null) { StopCoroutine(eventCo); eventCo = null; }
-            if (mat != null) { mat.SetFloat(BlendId, 0f); mat.SetTexture(BlendTexId, null); }
+            eventHeld = false;
+            if (mat != null) { mat.SetFloat(BlendId, 0f); mat.SetFloat(WipeId, 0f); mat.SetTexture(BlendTexId, null); }
             ReleaseEventMask();
             // 사진 위 사건 영상이면 멈춤 (일반 360 영상을 보는 중이면 그대로 둠 — 다음 항목에서 처리)
             if (videoRT == null || mat == null || mat.GetTexture(MainTexId) != videoRT)
@@ -513,7 +599,7 @@ namespace Pano360
         void OnApplicationPause(bool paused)
         {
             // 헤드셋을 벗으면 영상도 멈췄다가 다시 쓰면 이어서 재생
-            if (videoPlayer == null || videoRT == null || (!eventPlaying && mat.GetTexture(MainTexId) != videoRT)) return;
+            if (videoPlayer == null || videoRT == null || eventHeld || (!eventPlaying && mat.GetTexture(MainTexId) != videoRT)) return;
             if (paused) videoPlayer.Pause(); else videoPlayer.Play();
         }
 
