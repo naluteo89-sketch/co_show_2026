@@ -41,6 +41,8 @@ namespace Pano360
         public bool eventRepeat = true;
         [Tooltip("다시 재생하기까지 사진만 보여 주는 시간 (초)")]
         public float eventInterval = 8f;
+        [Tooltip("범위 마스크(이름_event_mask.png) 경계 부드럽기. 밉맵 단계 0=딱딱 3≈1.4° 5≈5.6°")]
+        [Range(0f, 6f)] public float eventMaskSoftness = 3f;
 
         Camera cam;
         Transform head;
@@ -65,12 +67,16 @@ namespace Pano360
         float fade = 1f;
         Coroutine eventCo;               // 사진 위 사건 영상 반복
         bool eventPlaying;
+        Texture2D eventMask;             // 사건 영상 범위 (흰색만 영상, 나머지는 고화질 사진)
 
         static readonly int MainTexId = Shader.PropertyToID("_MainTex");
         static readonly int StereoId = Shader.PropertyToID("_Stereo");
         static readonly int FadeId = Shader.PropertyToID("_Fade");
         static readonly int BlendTexId = Shader.PropertyToID("_BlendTex");
         static readonly int BlendId = Shader.PropertyToID("_Blend");
+        static readonly int BlendMaskId = Shader.PropertyToID("_BlendMask");
+        static readonly int UseBlendMaskId = Shader.PropertyToID("_UseBlendMask");
+        static readonly int MaskLodId = Shader.PropertyToID("_MaskLod");
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void AutoCreate()
@@ -279,7 +285,7 @@ namespace Pano360
                     string warn = Mathf.Abs(ratio - want) > 0.03f
                         ? $"\n\nWARNING: {tex.width}x{tex.height} is not {(p.stereo ? "1:1" : "2:1")} - image will look stretched"
                         : "";
-                    label.Show($"{i + 1} / {photos.Count}{(p.HasEvent ? "  [EVENT]" : "")}\n{p.name}{(p.stereo ? "  [3D]" : "")}\n{tex.width}x{tex.height}{warn}",
+                    label.Show($"{i + 1} / {photos.Count}{(p.HasEvent ? (string.IsNullOrEmpty(p.eventMaskUrl) ? "  [EVENT]" : "  [EVENT+MASK]") : "")}\n{p.name}{(p.stereo ? "  [3D]" : "")}\n{tex.width}x{tex.height}{warn}",
                                warn.Length > 0 ? labelDuration * 2f : labelDuration);
                 }
                 else
@@ -306,6 +312,7 @@ namespace Pano360
         // 평소엔 고화질(8K) 사진. 사건 영상(4K)은 처음·끝이 원본과 같으므로 부드럽게 바꿨다가 끝나면 다시 사진으로.
         IEnumerator EventCycle(PhotoEntry p)
         {
+            yield return LoadEventMask(p);
             float wait = eventDelay;
             while (true)
             {
@@ -355,6 +362,51 @@ namespace Pano360
             }
         }
 
+        /// 범위 마스크: 있으면 흰색 부분만 영상으로 바뀌고 나머지는 8K 사진 그대로 (영상 해상도가 낮아도 배경은 선명)
+        IEnumerator LoadEventMask(PhotoEntry p)
+        {
+            ReleaseEventMask();
+            if (string.IsNullOrEmpty(p.eventMaskUrl)) yield break;
+            using (var req = UnityWebRequest.Get(p.eventMaskUrl))
+            {
+                yield return req.SendWebRequest();
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    Debug.LogError($"[Pano360] 사건 범위 마스크 로드 실패 {p.eventMaskUrl}: {req.error} — 화면 전체에 영상");
+                    yield break;
+                }
+                // 그림 형식(흑백/RGBA/알파만)과 상관없이 밝기만 꺼내 R8 + 밉맵으로 → 낮은 밉 단계로 샘플하면 경계가 부드러움
+                var src = new Texture2D(2, 2);
+                if (!src.LoadImage(req.downloadHandler.data, false))
+                {
+                    Destroy(src);
+                    Debug.LogError($"[Pano360] 사건 범위 마스크를 읽지 못함 {p.eventMaskUrl}");
+                    yield break;
+                }
+                bool alphaOnly = src.format == TextureFormat.Alpha8;
+                var px = src.GetPixels32();
+                var bytes = new byte[px.Length];
+                for (int k = 0; k < px.Length; k++) bytes[k] = alphaOnly ? px[k].a : px[k].r;
+                var tex = new Texture2D(src.width, src.height, TextureFormat.R8, true, true);
+                Destroy(src);
+                tex.SetPixelData(bytes, 0);
+                tex.wrapModeU = TextureWrapMode.Repeat;    // 360 좌우가 이어짐
+                tex.wrapModeV = TextureWrapMode.Clamp;
+                tex.filterMode = FilterMode.Trilinear;
+                tex.Apply(true, true);
+                eventMask = tex;
+            }
+            mat.SetTexture(BlendMaskId, eventMask);
+            mat.SetFloat(MaskLodId, eventMaskSoftness);
+            mat.SetFloat(UseBlendMaskId, 1f);
+        }
+
+        void ReleaseEventMask()
+        {
+            if (mat != null) { mat.SetFloat(UseBlendMaskId, 0f); mat.SetTexture(BlendMaskId, null); }
+            if (eventMask != null) { Destroy(eventMask); eventMask = null; }
+        }
+
         IEnumerator BlendTo(float target)
         {
             float b = mat.GetFloat(BlendId);
@@ -370,6 +422,7 @@ namespace Pano360
         {
             if (eventCo != null) { StopCoroutine(eventCo); eventCo = null; }
             if (mat != null) { mat.SetFloat(BlendId, 0f); mat.SetTexture(BlendTexId, null); }
+            ReleaseEventMask();
             // 사진 위 사건 영상이면 멈춤 (일반 360 영상을 보는 중이면 그대로 둠 — 다음 항목에서 처리)
             if (videoRT == null || mat == null || mat.GetTexture(MainTexId) != videoRT)
             {
@@ -467,6 +520,7 @@ namespace Pano360
         void OnDestroy()
         {
             StopVideo();
+            ReleaseEventMask();
             if (current != null) Destroy(current);
             if (mat != null) Destroy(mat);
         }

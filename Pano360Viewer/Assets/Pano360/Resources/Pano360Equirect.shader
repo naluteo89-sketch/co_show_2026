@@ -10,6 +10,9 @@ Shader "Pano360/Equirect"
         _Fade ("Fade To Black", Range(0, 1)) = 0
         _BlendTex ("Event Video Texture", 2D) = "black" {}
         _Blend ("Blend To Event Video", Range(0, 1)) = 0
+        _BlendMask ("Event Video Mask (white = video)", 2D) = "white" {}
+        _UseBlendMask ("Use Event Video Mask", Float) = 0
+        _MaskLod ("Mask Softness (mip level)", Float) = 3
     }
     SubShader
     {
@@ -31,6 +34,9 @@ Shader "Pano360/Equirect"
             float _Stereo;
             float _Fade;
             float _Blend;
+            sampler2D _BlendMask;  // 사건 영상 범위 (흰색만 영상, 나머지는 고화질 사진 그대로)
+            float _UseBlendMask;
+            float _MaskLod;        // 마스크 밉맵 단계로 경계를 부드럽게 (3 ≈ 8배 축소 = 약 1.4°)
 
             struct appdata
             {
@@ -63,6 +69,7 @@ Shader "Pano360/Equirect"
                 float u = atan2(d.x, d.z) * (0.5 / UNITY_PI) + 0.5;
                 float v = asin(clamp(d.y, -1.0, 1.0)) / UNITY_PI + 0.5;
 
+                float2 monoUV = float2(u, v);   // 마스크는 모노 360 좌표
                 if (_Stereo > 0.5)
                 {
                 #if defined(USING_STEREO_MATRICES)
@@ -76,7 +83,10 @@ Shader "Pano360/Equirect"
                 // 밉맵이 없으므로 LOD 0 고정 샘플링 (u 이음새에서의 미분 튐 방지)
                 fixed4 c = tex2Dlod(_MainTex, float4(u, v, 0, 0));
                 if (_Blend > 0.001)
-                    c = lerp(c, tex2Dlod(_BlendTex, float4(u, v, 0, 0)), _Blend);
+                {
+                    float m = _UseBlendMask > 0.5 ? tex2Dlod(_BlendMask, float4(monoUV, 0, _MaskLod)).r : 1.0;
+                    c = lerp(c, tex2Dlod(_BlendTex, float4(u, v, 0, 0)), _Blend * m);
+                }
                 c.rgb *= (1.0 - _Fade);
                 c.a = 1;
                 return c;
