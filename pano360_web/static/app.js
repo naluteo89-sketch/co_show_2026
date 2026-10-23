@@ -1,14 +1,14 @@
 import {api, post, esc} from "./api.js";
+import {$, errHtml, usageText, modelOptions, fillBackends} from "./dom.js";
 import {createViewer} from "./viewer.js";
 import {createPoller} from "./poller.js";
 import {setupMotion} from "./video.js";
 import {setupEvent} from "./event.js";
 
-const $ = id => document.getElementById(id);
 let cfg = null, run = null, ctrlTimer = null;
 const viewer = createViewer($("viewer"));
-const motion = setupMotion({api, post, esc});
-const eventUI = setupEvent({api, post, esc});
+const motion = setupMotion();
+const eventUI = setupEvent();
 let viewVersion = 0, controlVersion = 0, sourceUrl = null;
 const poller = createPoller(
   (id, n, signal) => api(`/api/run/${id}/attempt/${n}`, {signal}),
@@ -48,17 +48,14 @@ async function init() {
   try {
     cfg = await api("/api/config");
     const chip = (ok, t) => `<span class="chip ${ok ? "ok" : "bad"}">${esc(t)}</span>`;
-    $("model").innerHTML = cfg.openai_models.map(m => `<option>${esc(m)}</option>`).join("");
+    $("model").innerHTML = modelOptions(cfg.openai_models);
     $("model").value = cfg.openai_model;
     $("chips").innerHTML = chip(cfg.openai_ready, `OpenAI · 기본 ${cfg.openai_model}`) +
       cfg.backends.map(b => chip(b.ok, b.label)).join("") +
       `<span class="chip">${esc(cfg.workflow)}</span>` +
       `<span class="chip" title="${esc(cfg.version)}">v ${esc((cfg.version || "?").split(" ").slice(0, 2).join(" "))}</span>`;
-    $("backend").innerHTML = cfg.backends.map(b =>
-      `<option value="${b.name}">${esc(b.label)}${b.ok ? "" : " (연결 안 됨)"}</option>`).join("");
-    $("backend2").innerHTML = $("backend").innerHTML;
-    const pref = cfg.backends.find(b => b.name === cfg.default_backend && b.ok) || cfg.backends.find(b => b.ok);
-    if (pref) { $("backend").value = pref.name; $("backend2").value = pref.name; }
+    fillBackends($("backend"), cfg);
+    fillBackends($("backend2"), cfg);
     const g = cfg.gen_defaults || {};
     $("g_steps").value = g.steps ?? ""; $("g_cfg").value = g.cfg ?? ""; $("g_lora").value = g.lora_strength ?? ""; $("g_seam").value = g.seam_denoise ?? "";
   } catch (e) { $("chips").innerHTML = `<span class="chip bad">서버 연결 실패</span>`; }
@@ -93,7 +90,7 @@ async function upload(file) {
     $("srcinfo").innerHTML = `${run.width} × ${run.height}px` + (run.is_erp ? " · 360 이미지" : (run.exif_hfov ? ` · EXIF 화각 ${run.exif_hfov}°` : " · EXIF 화각 없음 (LLM이 추정)"));
     $("erpbox").classList.toggle("hidden", !run.is_erp);
     loadRuns();
-  } catch (e) { if (!current(version)) return; $("srcinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  } catch (e) { if (!current(version)) return; $("srcinfo").innerHTML = errHtml(e.message); }
 }
 
 // ---------- 2. 분석
@@ -105,9 +102,8 @@ async function analyze() {
     const r = await post("/api/analyze", {run_id: run.run_id, note: $("note").value, model: $("model").value});
     if (!current(version)) return;
     showAnalysis(r.analysis, r.placement, r.prompts);
-    const u = r.usage || {};
-    $("anstate").textContent = `${r.model} · 입력 ${u.input_tokens ?? "?"} / 출력 ${u.output_tokens ?? "?"} 토큰`;
-  } catch (e) { if (!current(version)) return; $("anstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    $("anstate").textContent = usageText(r.model, r.usage);
+  } catch (e) { if (!current(version)) return; $("anstate").innerHTML = errHtml(e.message); }
   $("analyze").disabled = false;
 }
 
@@ -203,7 +199,7 @@ async function importAsResult() {
     $("jobtext").textContent = `#${att.n} 가져온 360 이미지 · ${(att.size || []).join("×")}`;
     showResult(att); loadAttempts(); loadRuns();
     $("jobcard").scrollIntoView({behavior: "smooth"});
-  } catch (e) { if (current(version)) $("importstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  } catch (e) { if (current(version)) $("importstate").innerHTML = errHtml(e.message); }
   $("importbtn").disabled = false;
 }
 
@@ -256,7 +252,7 @@ function showResult(att) {
       $("repastestate").textContent = `완료 (${r.mode})`;
       showResult({...att, files: r.files, photo_pasted: r.mode});
       const nf = finalFile(r.files); if (nf) viewer.load((nf.jpg || nf.url) + (nf.v ? `?v=${nf.v}` : ""));
-    } catch (e) { $("repastestate").innerHTML = `<span class="err">${esc(e.message)}</span>`; b.disabled = false; }
+    } catch (e) { $("repastestate").innerHTML = errHtml(e.message); b.disabled = false; }
   };
   if (f) $("results").insertAdjacentHTML("beforeend",
     `<div class="note">발밑이 뭉개지거나 하늘 꼭대기가 비어 보이면 →
@@ -267,7 +263,7 @@ function showResult(att) {
     e.preventDefault(); const st = el.nextElementSibling || el.parentElement.querySelector(".tvstate"); st.textContent = "복사 중…";
     try { const r = await post(`/api/run/${run.run_id}/attempt/${el.dataset.n}/to_viewer`, {});
           st.textContent = `추가됨 (사진 ${r.count}장) — Unity에서 다시 빌드하세요`; }
-    catch (err) { st.innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+    catch (err) { st.innerHTML = errHtml(err.message); }
   });
   if (f) viewer.load(f.jpg || f.url);
   motion.show(run.run_id, att, cfg);       // 5. 영상화 프롬프트 (이 결과 기준)

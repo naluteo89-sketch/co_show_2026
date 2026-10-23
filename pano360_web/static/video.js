@@ -2,19 +2,21 @@
 // 결과 360 과 생성 프롬프트를 LLM 에 보내 '어디를 어떻게 움직일지' 받고, 영역별 Cinemagraph 프롬프트를 만든다.
 // 영상은 ComfyUI/LTX 쪽에서 만든다 — 여기서는 영역(마스크)과 프롬프트만.
 
+import {api, post, esc} from "./api.js";
+import {$, errHtml, usageText, modelOptions, copyText} from "./dom.js";
+
 const FIELDS = ["name_ko", "element", "yaw", "pitch", "hfov", "aspect", "motion", "speed", "strength", "keep_still",
                 "spread", "spread_strength"];
 const NUM = new Set(["yaw", "pitch", "hfov", "aspect", "strength", "spread_strength"]);
 const aspectOf = r => r.aspect || (r.orientation === "portrait" ? 512 / 704 : 704 / 512);
-function sizeOf(a) {                                       // 서버 erp.region_size 와 같은 계산
+function sizeOf(a) {                                       // 서버 studio/erp/regions.py region_size 와 같은 계산
   a = Math.min(2, Math.max(0.5, a));
   const w = Math.sqrt(1408 * 1024 * a), h = w / a;
   return [Math.max(384, Math.round(w / 64) * 64), Math.max(384, Math.round(h / 64) * 64)];
 }
 const COLORS = ["#ff5a6e", "#5ac8ff", "#ffc83c", "#78e68c", "#c88cff"];
 
-export function setupMotion({api, post, esc}) {
-  const $ = id => document.getElementById(id);
+export function setupMotion() {
   let runId = null, n = null, plan = null, models = [], pickTarget = null;
 
   function regionHtml(r, i) {
@@ -124,10 +126,9 @@ export function setupMotion({api, post, esc}) {
     $("mplan").disabled = true; $("mstate").textContent = "LLM 이 결과 360 을 보고 움직일 곳을 고르는 중… (20~60초)";
     try {
       plan = await post(`/api/run/${runId}/attempt/${n}/motion`, {note: $("mnote").value, model: $("mmodel").value});
-      const u = plan.usage || {};
-      $("mstate").textContent = `${plan.model} · 입력 ${u.input_tokens ?? "?"} / 출력 ${u.output_tokens ?? "?"} 토큰`;
+      $("mstate").textContent = usageText(plan.model, plan.usage);
       render();
-    } catch (e) { $("mstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { $("mstate").innerHTML = errHtml(e.message); }
     $("mplan").disabled = false;
   }
 
@@ -140,7 +141,7 @@ export function setupMotion({api, post, esc}) {
       plan = await post(`/api/run/${runId}/attempt/${n}/motion/update`, {regions: plan.regions, lighting: plan.lighting});
       $("mstate").textContent = "저장했어요.";
       render();
-    } catch (e) { $("mstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { $("mstate").innerHTML = errHtml(e.message); }
     $("msave").disabled = false;
   }
 
@@ -212,20 +213,18 @@ export function setupMotion({api, post, esc}) {
                        motion: "", speed: "slow", strength: 1.2, keep_still: "", regen: true});
     render();
   };
-  const copyText = async (txt, what) => {
-    try { await navigator.clipboard.writeText(txt); $("mltxnote").textContent = `${what} 를 복사했어요.`; }
-    catch { $("mltxnote").textContent = "복사하지 못했어요. 칸에서 직접 선택해 복사하세요."; }
-  };
+  const copyLtx = (txt, what) => copyText(txt, $("mltxnote"), `${what} 를 복사했어요.`,
+                                          "복사하지 못했어요. 칸에서 직접 선택해 복사하세요.");
   $("mltxfor").onchange = () => { if (plan) { collect(); render(); } };
-  $("mltxcp").onclick = () => copyText($("mltxpos").value, "Positive");
-  $("mltxcn").onclick = () => copyText($("mltxneg").value, "Negative");
+  $("mltxcp").onclick = () => copyLtx($("mltxpos").value, "Positive");
+  $("mltxcn").onclick = () => copyLtx($("mltxneg").value, "Negative");
   $("mcopy").onclick = async () => {
     collect();
     const out = {lighting: plan.lighting, video_model: plan.video_model,
       panorama: {positive: $("mltxpos").value, negative: $("mltxneg").value}, regions: plan.regions.map(r =>
       Object.fromEntries([...FIELDS, "positive", "negative", "crop", "crop_size"].map(k => [k, r[k]])))};
-    try { await navigator.clipboard.writeText(JSON.stringify(out, null, 2)); $("mstate").textContent = "프롬프트 JSON 을 복사했어요."; }
-    catch { $("mstate").textContent = "복사하지 못했어요. 작업 폴더의 motion/plan.json 을 쓰세요."; }
+    await copyText(JSON.stringify(out, null, 2), $("mstate"), "프롬프트 JSON 을 복사했어요.",
+                   "복사하지 못했어요. 작업 폴더의 motion/plan.json 을 쓰세요.");
   };
 
   return {
@@ -234,7 +233,7 @@ export function setupMotion({api, post, esc}) {
       runId = id; n = att.n; plan = att.motion || null;
       if (cfg && cfg.openai_models && !models.length) {
         models = cfg.openai_models;
-        $("mmodel").innerHTML = models.map(m => `<option>${esc(m)}</option>`).join("");
+        $("mmodel").innerHTML = modelOptions(models);
         $("mmodel").value = cfg.openai_model;
       }
       $("motioncard").classList.remove("hidden");

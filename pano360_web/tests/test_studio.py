@@ -18,11 +18,12 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import api
-import comfy
-import server
-import workflow
-from storage import InvalidRunPath, RunStore
+from studio import erp, llm, server, workflow
+from studio.clients import comfy
+from studio.storage import InvalidRunPath, RunStore
+from studio.video import compose
+
+NODES = ROOT.parent / "comfy_nodes"
 
 
 def png(size=(64, 32)):
@@ -104,12 +105,6 @@ class WorkflowTests(unittest.TestCase):
                 if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int):
                     self.assertIn(value[0], graph)
 
-    def test_compatibility_imports_use_single_implementation(self):
-        self.assertIs(api.ComfyUI, comfy.ComfyUI)
-        self.assertIs(comfy.LocalComfy, comfy.ComfyUI)
-        self.assertIs(comfy.CloudComfy, comfy.ComfyCloud)
-
-
 class StudioTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -124,7 +119,7 @@ class StudioTests(unittest.IsolatedAsyncioTestCase):
         self.cfg["pole"]["work_width"] = 64
         (self.root / "viewer").mkdir()
         self.backend = FakeBackend()
-        factory = patch("server.comfy.make_backends", return_value={"fake": self.backend})
+        factory = patch("studio.clients.comfy.make_backends", return_value={"fake": self.backend})
         factory.start()
         self.addCleanup(factory.stop)
         app = server.create_app(self.cfg, {"openai": "", "comfy_cloud": ""})
@@ -145,7 +140,8 @@ class StudioTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_static_modules_and_config(self):
         for path in ["/", "/static/style.css", "/static/app.js", "/static/api.js",
-                     "/static/poller.js", "/static/viewer.js"]:
+                     "/static/poller.js", "/static/viewer.js", "/static/dom.js",
+                     "/static/video.js", "/static/event.js"]:
             response = await self.client.get(path)
             self.assertEqual(response.status, 200, path)
             self.assertTrue(await response.read())
@@ -156,6 +152,7 @@ class StudioTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cfg["backends"][0]["ok"])
 
     async def test_generate_saves_results_and_viewer_copy(self):
+        self.cfg["keep_photo"]["enabled"] = True           # 원본 사진 보존 경로까지 검사 (config 기본값은 꺼짐)
         uploaded = await self.upload((48, 32))
         rid = uploaded["run_id"]
         result = await self.request_json("POST", "/api/generate", json={
@@ -168,7 +165,7 @@ class StudioTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(a, b)
         self.assertEqual(a["state"], "done")
         self.assertTrue(a["photo_pasted"])
-        self.assertEqual(self.backend.fetch_count, 1)
+        self.assertEqual(self.backend.fetch_count, 3)    # 동시 조회여도 결과·업스케일 원본·진단 2K 를 한 번씩만 받음
         self.assertEqual(len(a["files"]), 1)
         self.assertEqual((await self.client.get(a["files"][0]["jpg"])).status, 200)
         for _ in range(2):
@@ -205,10 +202,9 @@ class StudioTests(unittest.IsolatedAsyncioTestCase):
 
 
 
-class MotionTests(unittest.TestCase):
+class ImageAndVideoTests(unittest.TestCase):
     """영상화: 일부만 움직이는 영역 · 프롬프트."""
     def test_photo_paste_keeps_detail_when_photo_is_small(self):
-        import erp
         self.assertEqual(erp.photo_paste_mode(8192, 1200, 72)[0], "detail")      # 1°당 16.7px < 22.8px
         self.assertEqual(erp.photo_paste_mode(8192, 4000, 72)[0], "original")
         rng = np.random.default_rng(0)
@@ -222,18 +218,17 @@ class MotionTests(unittest.TestCase):
         self.assertGreater(c.std(), 5)                                        # 결과의 디테일은 남음
 
     def test_event_prompt(self):
-        import llm, workflow
         e = llm.clamp_event({"yaw": 400, "pitch": 80, "hfov": 10, "calm_start": "calm", "event": "water surges",
                              "peak": "spray fills view", "calm_end": "settles", "keep": "bridge"})
         self.assertEqual((e["yaw"], e["pitch"], e["hfov"]), (40.0, 40.0, 60.0))
         pr = llm.event_prompts(e)
         self.assertIn("begins calm", pr["positive"]); self.assertIn("water surges", pr["positive"])
-        self.assertIn("{event}", workflow.LTX360_POS)
+        self.assertIn("{event}", llm.LTX360_POS)
 
     def test_video_node_file_filled_with_web_values(self):
-        import workflow, json, os
-        here = os.path.join(os.path.dirname(__file__), "..", "video_nodes")
-        rt = json.load(open(os.path.join(here, "retest.json"), encoding="utf-8"))
+        import json, os
+        here = NODES / "video"
+        rt = workflow.load_template(os.path.join(here, "retest.json"))
         ui, seed, info = workflow.fill_video_node(rt, image="p.jpg", positive="P", negative="N", seconds=5, rect=(300, 200, 900, 400))
         g, saves = workflow.video_node_api(ui)
         self.assertEqual(info["mode"], "rect")
@@ -246,13 +241,12 @@ class MotionTests(unittest.TestCase):
             for v in nd["inputs"].values():
                 if isinstance(v, list) and len(v) == 2 and isinstance(v[1], int):
                     self.assertIn(v[0], g)
-        mi = json.load(open(os.path.join(here, "quest360_flood_mask_inpaint_4k.json"), encoding="utf-8"))
+        mi = workflow.load_template(os.path.join(here, "quest360_flood_mask_inpaint_4k.json"))
         ui, _, info = workflow.fill_video_node(mi, image="p.jpg", positive="P", negative="N", mask_image="m.png")
         self.assertEqual(info["mode"], "image")
         self.assertEqual(workflow.video_node_api(ui)[0]["1162"]["inputs"]["image"], "m.png")
 
     def test_crop_plan_from_painted_mask(self):
-        import workflow
         from PIL import Image, ImageDraw
         m = Image.new("L", (2048, 1024)); ImageDraw.Draw(m).rectangle([250, 380, 1300, 790], fill=255)
         c = workflow.crop_plan(m, (8192, 4096))
@@ -269,11 +263,9 @@ class MotionTests(unittest.TestCase):
             workflow.crop_plan(wide, (8192, 4096))
 
     def test_crop_video_node_filled(self):
-        import workflow, json, os
-        path = os.path.join(os.path.dirname(__file__), "..", "video_nodes", "event_cropgen_v1.json")
-        if not os.path.isfile(path):
-            self.skipTest("event_cropgen_v1.json 없음")
-        t = json.load(open(path, encoding="utf-8"))
+        import json, os
+        path = NODES / "video" / "event_cropgen_v1.json"
+        t = workflow.load_template(path)
         self.assertTrue(workflow.video_has_crop(t))
         plan = {"mask": [100, 300, 1200, 510], "src": [400, 1200, 4800, 2040], "gen": [2560, 1088],
                 "gen_lo": [1280, 544], "out": [200, 600, 2400, 1020]}
@@ -297,7 +289,7 @@ class MotionTests(unittest.TestCase):
             workflow.fill_video_node(t, image="p.jpg", positive="P", negative="N", mask_image="m.png")
 
     def test_compose_crop_video_into_360(self):
-        import event_compose, shutil, subprocess, tempfile, os
+        import shutil, subprocess, tempfile, os
         from PIL import ImageDraw
         if not shutil.which("ffmpeg"):
             self.skipTest("ffmpeg 없음")
@@ -307,7 +299,7 @@ class MotionTests(unittest.TestCase):
                         "-pix_fmt", "yuv420p", crop_mp4], check=True)
         Image.new("RGB", (2048, 1024), (0, 0, 255)).save(os.path.join(d, "s.jpg"))
         m = Image.new("L", (2048, 1024)); ImageDraw.Draw(m).rectangle([600, 400, 900, 600], fill=255); m.save(os.path.join(d, "m.png"))
-        info = event_compose.compose_crop_video(crop_mp4, os.path.join(d, "s.jpg"), os.path.join(d, "m.png"),
+        info = compose.compose_crop_video(crop_mp4, os.path.join(d, "s.jpg"), os.path.join(d, "m.png"),
                                                 {"mask": [560, 380, 400, 240], "out": [1120, 760, 800, 480]}, out,
                                                 out_w=1024, audio=False)
         self.assertEqual((info["frames"], info["size"]), (24, [1024, 512]))
@@ -322,7 +314,7 @@ class MotionTests(unittest.TestCase):
         self.assertGreater(last[250, 375, 2], 200)     # 마지막 프레임 = 첫 화면(사진) — 뷰어 전환이 자연스러움
 
     def test_front_shift_puts_event_in_front(self):
-        import event_compose, tempfile, os
+        import tempfile, os
         from PIL import ImageDraw
         d = tempfile.mkdtemp()
         for box, cx in (([300, 400, 500, 600], 400), ([1900, 400, 2047, 600], None)):
@@ -330,22 +322,21 @@ class MotionTests(unittest.TestCase):
             if cx is None:                                   # 좌우 끝에 걸친 범위
                 ImageDraw.Draw(m).rectangle([0, 400, 100, 600], fill=255); cx = 2000
             p = os.path.join(d, "m.png"); m.save(p)
-            sh = event_compose.front_shift(p)
+            sh = compose.front_shift(p)
             self.assertLessEqual(abs((cx + sh) % 2048 - 1024), 30)          # 돌린 뒤 중심이 정면(1024)
             out = os.path.join(d, "r.png")
-            event_compose.roll_image(p, out, sh)
+            compose.roll_image(p, out, sh)
             col = np.asarray(Image.open(out)).sum(0)
             self.assertGreater(col[1024], 0)
 
     def test_event_timeline_fits_clip(self):
-        import workflow
-        t = workflow.event_timeline(6)
+        t = llm.event_timeline(6)
         self.assertIn("0-0.9s", t); self.assertIn("5.1-6s", t); self.assertIn("finishes inside the clip", t)
 
     def test_seam_second_pass_and_paste_harmonize(self):
-        import workflow, erp, json
-        t = json.load(open(ROOT.parent / "test_quest3.json", encoding="utf-8"))
-        cfg = json.load(open(ROOT / "config.json", encoding="utf-8"))
+        import json
+        t = workflow.load_template(NODES / "image" / "test_quest3.json")
+        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         pr = {k: "x" for k in ("positive", "negative", "seam_positive", "seam_negative")}
         api_, _ = workflow.build(t, cfg["node_ids"], control_image="c.png", prompts=pr, settings={"steps": 4, "cfg": 1.0})
         self.assertEqual(api_["916"]["inputs"]["denoise"], 0.6)                  # 이음새 2차: 좁은 띠를 약하게
@@ -361,7 +352,7 @@ class MotionTests(unittest.TestCase):
         self.assertAlmostEqual(float(h[y, 256, 0]), float(p[y, 256, 0]), delta=3)  # 사진 가운데는 원본 그대로
 
     def test_wrap_line_removed(self):
-        import erp, tempfile, os
+        import tempfile, os
         from PIL import Image
         rng = np.random.default_rng(0)
         img = (rng.random((256, 1024, 3)) * 60 + 80).astype(np.uint8)
@@ -376,7 +367,7 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(erp.fix_wrap_line(clean), [])
 
     def test_wrap_tone_matched(self):
-        import erp, tempfile, os
+        import tempfile, os
         from PIL import Image
         img = np.full((128, 1024, 3), 100, np.uint8); img[:, 512:] = 140        # 이음새 양쪽 밝기 다름
         p = os.path.join(tempfile.mkdtemp(), "t.png"); Image.fromarray(img).save(p)
@@ -386,18 +377,16 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(int(out[64, 400, 0]), 100)                                # 멀리는 그대로
 
     def test_photo_upscale_ids_do_not_clash_with_photo_lock(self):
-        import workflow
         api = {"31": {"class_type": "KSampler", "inputs": {"latent_image": ["951", 0]}},
                "950": {"class_type": "LoadImageMask", "inputs": {}}, "951": {"class_type": "SetLatentNoiseMask", "inputs": {}}}
         workflow.add_photo_upscale(api, "p.png", "x")
         self.assertEqual(api["951"]["class_type"], "SetLatentNoiseMask")      # 사진 잠금 노드가 덮이지 않음
 
     def test_region_crop_mask_and_prompt(self):
-        import erp, llm
         W, H = 512, 256
         img = Image.new("RGB", (W, H), (40, 40, 40))
         img.paste((255, 0, 0), (W // 2 - 10, H // 2 - 10, W // 2 + 10, H // 2 + 10))   # yaw 0, pitch 0 에 빨간 점
-        w, h = erp.view_size("landscape", long_side=128)
+        w, h = 128, 80
         crop = erp.perspective(img, 0, 0, 40, w, h)
         self.assertEqual(crop.getpixel((w // 2, h // 2)), (255, 0, 0))
         self.assertNotEqual(erp.perspective(img, 180, 0, 40, w, h).getpixel((w // 2, h // 2)), (255, 0, 0))

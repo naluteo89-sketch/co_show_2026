@@ -12,7 +12,6 @@
 *.aab
 .vs/
 .idea/
-C:\co_show_2026\Pano360Viewer\Assets\StreamingAssets\Pano360\
 # Android native build cache (Unity 6)
 /.utmp/
 # Unity crash-recovery scene backups

@@ -15,8 +15,8 @@
   "model_sources": {
     "flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors": "https://huggingface.co/nomadoor/flux-2-klein-4B-360-erp-outpaint-lora/blob/main/flux-2-klein-4B-360-erp-outpaint-lora_V1.safetensors"
   },
-  "workflow": "../test_quest3.json",
-  "video_template": "video_nodes/event_cropgen_v1.json",
+  "workflow": "../comfy_nodes/image/test_quest3.json",
+  "video_template": "../comfy_nodes/video/event_cropgen_v1.json",
   "final_tag": "8k",
   "jpg_quality": 95,
   "viewer_dir": "../Pano360Viewer/Assets/StreamingAssets/Pano360",
