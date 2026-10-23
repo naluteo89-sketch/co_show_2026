@@ -251,6 +251,140 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(info["mode"], "image")
         self.assertEqual(workflow.video_node_api(ui)[0]["1162"]["inputs"]["image"], "m.png")
 
+    def test_crop_plan_from_painted_mask(self):
+        import workflow
+        from PIL import Image, ImageDraw
+        m = Image.new("L", (2048, 1024)); ImageDraw.Draw(m).rectangle([250, 380, 1300, 790], fill=255)
+        c = workflow.crop_plan(m, (8192, 4096))
+        x, y, w, h = c["mask"]
+        self.assertTrue(x <= 250 and y <= 380 and x + w >= 1300 and y + h >= 790)       # 칠한 범위 + 여유
+        gw, gh = c["gen"]
+        self.assertTrue(gw % 64 == 0 and gh % 64 == 0 and gw * gh <= workflow.CROP_MAX_PIXELS)
+        self.assertAlmostEqual(w / h, gw / gh, delta=0.02)                              # 생성 크기와 같은 비율
+        self.assertEqual(c["src"], [x * 4, y * 4, w * 4, h * 4])                         # 8K 원본 좌표
+        self.assertEqual(c["out"], [x * 2, y * 2, w * 2, h * 2])                         # 4K 360 좌표
+        self.assertIsNone(workflow.crop_plan(Image.new("L", (2048, 1024)), (8192, 4096)))
+        wide = Image.new("L", (2048, 1024)); ImageDraw.Draw(wide).rectangle([0, 500, 2047, 600], fill=255)
+        with self.assertRaises(ValueError):
+            workflow.crop_plan(wide, (8192, 4096))
+
+    def test_crop_video_node_filled(self):
+        import workflow, json, os
+        path = os.path.join(os.path.dirname(__file__), "..", "video_nodes", "event_cropgen_v1.json")
+        if not os.path.isfile(path):
+            self.skipTest("event_cropgen_v1.json 없음")
+        t = json.load(open(path, encoding="utf-8"))
+        self.assertTrue(workflow.video_has_crop(t))
+        plan = {"mask": [100, 300, 1200, 510], "src": [400, 1200, 4800, 2040], "gen": [2560, 1088],
+                "gen_lo": [1280, 544], "out": [200, 600, 2400, 1020]}
+        ui, _, info = workflow.fill_video_node(t, image="p.jpg", positive="P", negative="N", seconds=6,
+                                               mask_image="m.png", crop=plan)
+        g, saves = workflow.video_node_api(ui)
+        self.assertEqual(info["mode"], "image")
+        self.assertEqual(g["1162"]["inputs"]["image"], "m.png")
+        self.assertEqual([g["1202"]["inputs"][k] for k in ("x", "y", "width", "height")], plan["src"])
+        self.assertEqual([g["1208"]["inputs"][k] for k in ("x", "y", "width", "height")], plan["mask"])
+        self.assertEqual((g["1203"]["inputs"]["width"], g["1204"]["inputs"]["height"]), (2560, 544))
+        self.assertNotIn("1221", g)                                   # 4K 360 붙이기는 서버(ffmpeg)가 함 → 노드는 꺼짐
+        self.assertEqual(g["1154"]["inputs"]["images"], ["1217", 0])   # 저장되는 건 칠한 범위 영상
+        self.assertEqual([ui_n["widgets_values_named"]["x"] for ui_n in ui["nodes"] if ui_n["id"] == 1221], [200])
+        self.assertTrue(saves)
+        for nd in g.values():
+            for v in nd["inputs"].values():
+                if isinstance(v, list) and len(v) == 2 and isinstance(v[1], int):
+                    self.assertIn(v[0], g)
+        with self.assertRaises(ValueError):
+            workflow.fill_video_node(t, image="p.jpg", positive="P", negative="N", mask_image="m.png")
+
+    def test_compose_crop_video_into_360(self):
+        import event_compose, shutil, subprocess, tempfile, os
+        from PIL import ImageDraw
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg 없음")
+        d = tempfile.mkdtemp()
+        crop_mp4, out = os.path.join(d, "c.mp4"), os.path.join(d, "o.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:size=320x192:rate=24:duration=1",
+                        "-pix_fmt", "yuv420p", crop_mp4], check=True)
+        Image.new("RGB", (2048, 1024), (0, 0, 255)).save(os.path.join(d, "s.jpg"))
+        m = Image.new("L", (2048, 1024)); ImageDraw.Draw(m).rectangle([600, 400, 900, 600], fill=255); m.save(os.path.join(d, "m.png"))
+        info = event_compose.compose_crop_video(crop_mp4, os.path.join(d, "s.jpg"), os.path.join(d, "m.png"),
+                                                {"mask": [560, 380, 400, 240], "out": [1120, 760, 800, 480]}, out,
+                                                out_w=1024, audio=False)
+        self.assertEqual((info["frames"], info["size"]), (24, [1024, 512]))
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", out, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             capture_output=True, check=True).stdout
+        f = np.frombuffer(raw, np.uint8).reshape(512, 1024, 3)
+        self.assertGreater(f[250, 375, 0], 200)        # 칠한 곳 = 영상(빨강)
+        self.assertGreater(f[50, 50, 2], 200)          # 밖 = 사진(파랑)
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-sseof", "-0.05", "-i", out, "-frames:v", "1", "-f", "rawvideo",
+                              "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        last = np.frombuffer(raw, np.uint8)[-512 * 1024 * 3:].reshape(512, 1024, 3)
+        self.assertGreater(last[250, 375, 2], 200)     # 마지막 프레임 = 첫 화면(사진) — 뷰어 전환이 자연스러움
+
+    def test_front_shift_puts_event_in_front(self):
+        import event_compose, tempfile, os
+        from PIL import ImageDraw
+        d = tempfile.mkdtemp()
+        for box, cx in (([300, 400, 500, 600], 400), ([1900, 400, 2047, 600], None)):
+            m = Image.new("L", (2048, 1024)); ImageDraw.Draw(m).rectangle(box, fill=255)
+            if cx is None:                                   # 좌우 끝에 걸친 범위
+                ImageDraw.Draw(m).rectangle([0, 400, 100, 600], fill=255); cx = 2000
+            p = os.path.join(d, "m.png"); m.save(p)
+            sh = event_compose.front_shift(p)
+            self.assertLessEqual(abs((cx + sh) % 2048 - 1024), 30)          # 돌린 뒤 중심이 정면(1024)
+            out = os.path.join(d, "r.png")
+            event_compose.roll_image(p, out, sh)
+            col = np.asarray(Image.open(out)).sum(0)
+            self.assertGreater(col[1024], 0)
+
+    def test_event_timeline_fits_clip(self):
+        import workflow
+        t = workflow.event_timeline(6)
+        self.assertIn("0-0.9s", t); self.assertIn("5.1-6s", t); self.assertIn("finishes inside the clip", t)
+
+    def test_seam_second_pass_and_paste_harmonize(self):
+        import workflow, erp, json
+        t = json.load(open(ROOT.parent / "test_quest3.json", encoding="utf-8"))
+        cfg = json.load(open(ROOT / "config.json", encoding="utf-8"))
+        pr = {k: "x" for k in ("positive", "negative", "seam_positive", "seam_negative")}
+        api_, _ = workflow.build(t, cfg["node_ids"], control_image="c.png", prompts=pr, settings={"steps": 4, "cfg": 1.0})
+        self.assertEqual(api_["916"]["inputs"]["denoise"], 0.6)                  # 이음새 2차: 좁은 띠를 약하게
+        self.assertEqual(api_["105"]["inputs"]["image"], ["920", 0])             # 되돌리기 전에 2차 결과 사용
+        # 사진 붙이기: 경계 바깥 생성 부분 톤이 사진 쪽으로 이어짐 (사각형 경계 단차 감소)
+        fin = Image.new("RGB", (512, 256), (90, 90, 90))
+        ph = Image.new("RGB", (64, 64), (200, 200, 200))
+        pasted = erp.photo_composite(fin, ph, 0, 0, 40, None, feather=0.05, color_strength=0.0)
+        h = np.asarray(erp.harmonize_paste(fin, pasted, ph.size, 0, 0, 40), np.float32)
+        p = np.asarray(pasted, np.float32)
+        y, xe = 128, 256 + int(512 * 20 / 360) + 3                               # 사진 오른쪽 경계 바로 바깥
+        self.assertGreater(h[y, xe, 0], p[y, xe, 0] + 10)
+        self.assertAlmostEqual(float(h[y, 256, 0]), float(p[y, 256, 0]), delta=3)  # 사진 가운데는 원본 그대로
+
+    def test_wrap_line_removed(self):
+        import erp, tempfile, os
+        from PIL import Image
+        rng = np.random.default_rng(0)
+        img = (rng.random((256, 1024, 3)) * 60 + 80).astype(np.uint8)
+        img[:, 2:5] = [200, 120, 20]                                    # 이음새 오른쪽에 주황 세로선
+        p = os.path.join(tempfile.mkdtemp(), "r.png"); Image.fromarray(img).save(p)
+        cols = erp.fix_wrap_line(p)
+        self.assertTrue(cols and min(cols) <= 2 and max(cols) >= 4)
+        out = np.asarray(Image.open(p)).astype(np.float32)
+        self.assertLess(abs(out[:, 3, 2].mean() - out[:, 30, 2].mean()), 15)   # 파랑 부족이 사라짐
+        self.assertEqual(erp.fix_wrap_line(p), [])                         # 선 없는 그림은 그대로
+        clean = os.path.join(os.path.dirname(p), "c.png"); Image.fromarray((rng.random((256, 1024, 3)) * 255).astype(np.uint8)).save(clean)
+        self.assertEqual(erp.fix_wrap_line(clean), [])
+
+    def test_wrap_tone_matched(self):
+        import erp, tempfile, os
+        from PIL import Image
+        img = np.full((128, 1024, 3), 100, np.uint8); img[:, 512:] = 140        # 이음새 양쪽 밝기 다름
+        p = os.path.join(tempfile.mkdtemp(), "t.png"); Image.fromarray(img).save(p)
+        self.assertGreater(erp.match_wrap_tone(p, width=256), 30)
+        out = np.asarray(Image.open(p)).astype(np.float32)
+        self.assertLess(abs(out[64, 0, 0] - out[64, -1, 0]), 3)                    # 이음새에서 같아짐
+        self.assertEqual(int(out[64, 400, 0]), 100)                                # 멀리는 그대로
+
     def test_photo_upscale_ids_do_not_clash_with_photo_lock(self):
         import workflow
         api = {"31": {"class_type": "KSampler", "inputs": {"latent_image": ["951", 0]}},

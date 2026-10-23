@@ -312,6 +312,77 @@ def tone_match(final_img: Image.Image, photo: Image.Image, strength=0.6, chunk=5
 
 
 
+def _median1d(a: np.ndarray, size: int) -> np.ndarray:
+    """열 방향(0축) 이동 중앙값 (가장자리는 끝값 반복)."""
+    k = size // 2
+    pad = np.concatenate([np.repeat(a[:1], k, 0), a, np.repeat(a[-1:], k, 0)], 0)
+    win = np.lib.stride_tricks.sliding_window_view(pad, size, axis=0)
+    return np.median(win, axis=-1)
+
+
+def wrap_line_columns(rgb: np.ndarray, half=48, thr=4.0, segs=6) -> list:
+    """좌우 이음새(x=0) ±24px 안에서 위아래 전체로 이어진 가는 선(밝기·색이 한 방향으로 튀는 열) 찾기.
+    반환: 이음새 기준 열 번호 (음수 = 오른쪽 끝 쪽)."""
+    H, W, _ = rgb.shape
+    win = np.concatenate([rgb[:, W - half:], rgb[:, :half]], 1).astype(np.float32)
+    R, G, B = win[..., 0], win[..., 1], win[..., 2]
+    parts = np.array_split(np.arange(int(H * 0.05), int(H * 0.95)), segs)
+    hit = np.zeros(win.shape[1], bool)
+    for f in ((R + G + B) / 3, B - 0.5 * (R + G), R - 0.5 * (G + B)):
+        dv = np.stack([f[p].mean(0) - _median1d(f[p].mean(0), 41) for p in parts])
+        hit |= np.all(dv > thr, 0) | np.all(dv < -thr, 0)        # 모든 높이 구간에서 같은 방향 = 세로선
+    near = np.zeros_like(hit)
+    near[half - 24: half + 24] = True
+    return [int(c - half) for c in np.nonzero(hit & near)[0]]
+
+
+def fix_wrap_line(img_path, half=48, grow=4) -> list:
+    """생성 결과의 좌우 이음새에 생긴 가는 세로선(1~2px@2K)을 지움: 선 자리를 양옆 결을 거울처럼 이어 서서히 섞음.
+    고친 열 목록 반환 (없으면 [] — 파일 그대로)."""
+    im = Image.open(img_path).convert("RGB")
+    rgb = np.asarray(im)
+    cols = wrap_line_columns(rgb, half)
+    if not cols:
+        return []
+    H, W, _ = rgb.shape
+    win = np.concatenate([rgb[:, W - half:], rgb[:, :half]], 1).astype(np.float32)
+    lo, hi = max(1, min(cols) + half - grow), min(2 * half - 1, max(cols) + half + grow + 1)
+    n = hi - lo
+    if lo - n < 0 or hi + n > 2 * half:
+        return []
+    left = win[:, lo - 1 - np.arange(n)]                 # i=0 → 왼쪽 경계 열
+    right = win[:, hi + (n - 1 - np.arange(n))]          # i=n-1 → 오른쪽 경계 열
+    t = (np.arange(n) + 0.5) / n
+    w = (t * t * (3 - 2 * t))[None, :, None]
+    win[:, lo:hi] = left * (1 - w) + right * w
+    win = np.clip(win + 0.5, 0, 255).astype(np.uint8)
+    out = rgb.copy()
+    out[:, W - half:] = win[:, :half]
+    out[:, :half] = win[:, half:]
+    Image.fromarray(out).save(img_path)
+    return list(range(lo - half, hi - half))
+
+
+def match_wrap_tone(img_path, width=384, probe=48, smooth=96) -> float:
+    """좌우 이음새 양쪽 밝기·색 차이를 줄임: 줄마다(세로로 부드럽게) 양쪽 평균 차이를 구해
+    이음새에서 width px 까지 서서히 줄어드는 보정을 반씩 나눠 더함. 반환: 보정 전 평균 차이(0~255)."""
+    import cv2
+    im = np.asarray(Image.open(img_path).convert("RGB")).astype(np.float32)
+    H, W, _ = im.shape
+    L = im[:, W - probe:].mean(1)                     # 오른쪽 끝 (H, 3)
+    R = im[:, :probe].mean(1)                         # 왼쪽 앞
+    D = cv2.GaussianBlur((L - R)[:, None, :], (1, 0), sigmaX=0.1, sigmaY=smooth)[:, 0, :]   # 세로로 부드럽게
+    gap = float(np.abs(D).mean())
+    if gap < 1.0:
+        return gap
+    x = np.arange(width, dtype=np.float32)
+    ramp = (0.5 * (1 + np.cos(np.pi * x / width)))[None, :, None]       # 이음새 1 → width 0
+    im[:, :width] += 0.5 * D[:, None, :] * ramp                          # 왼쪽 앞은 오른쪽 끝 쪽으로
+    im[:, W - width:] -= 0.5 * D[:, None, :] * ramp[:, ::-1]             # 오른쪽 끝은 왼쪽 앞 쪽으로
+    Image.fromarray(np.clip(im + 0.5, 0, 255).astype(np.uint8)).save(img_path)
+    return gap
+
+
 def wrap_seam_score(img_path) -> dict:
     """좌우 끝(360 이음새) 색 차이 vs 일반 이웃 픽셀 차이. ratio 가 2 이하면 눈에 거의 안 띔."""
     im = Image.open(img_path).convert("L")
@@ -351,6 +422,47 @@ def photo_paste_mode(final_w: int, photo_w: int, hfov: float, mode="auto") -> tu
     return ("original" if photo_ppd >= 0.95 * final_ppd else "detail"), final_ppd / photo_ppd
 
 
+def harmonize_paste(final_img: Image.Image, pasted: Image.Image, photo_size, yaw, pitch, hfov, vfov=None,
+                    band=0.45, edge=0.04, sigma_frac=0.012) -> Image.Image:
+    """붙인 원본 사진이 주변(생성 부분)과 '사각형으로 따로 노는' 것을 없앰 (2대역 합성).
+    저주파(밝기·색·안개·하늘 톤): 사진 경계 양쪽 band 폭에 걸쳐 '바깥 생성 부분'과 '안쪽 사진'을 넓게 섞음.
+      — 각자 자기 쪽 픽셀만으로 흐림(마스크 정규화)이라 경계의 단차가 섞이지 않음.
+    고주파(디테일): 경계 바로 안쪽 edge 폭에서 생성 → 사진으로 바뀜. 사진 안쪽은 원본 그대로."""
+    import cv2
+    W, H = pasted.size
+    sw, sh = photo_size
+    sW, sH = 2048, 1024
+    u, v, f = _photo_coords(sW, sH, np.arange(sH), yaw, pitch, hfov, sh / sw, vfov)
+    d = np.where(f, np.minimum(1 - np.abs(u), 1 - np.abs(v)), -9.0).astype(np.float32)
+    if d.max() <= 0:
+        return pasted
+    def ss(x):
+        x = np.clip(x, 0, 1)
+        return (x * x * (3 - 2 * x)).astype(np.float32)
+    w_lo = ss((d + band) / (2 * band))                     # 바깥 band → 안쪽 band
+    w_hi = ss(d / edge)                                    # 경계 → 안쪽 edge
+    m_in = (d > 0).astype(np.float32)
+    sig = max(1.0, sigma_frac * sW)
+    F = np.asarray(final_img.convert("RGB"), np.float32)
+    P = np.asarray(pasted.convert("RGB"), np.float32)
+    Fs = cv2.resize(F, (sW, sH), interpolation=cv2.INTER_AREA)
+    Ps = cv2.resize(P, (sW, sH), interpolation=cv2.INTER_AREA)
+
+    def mblur(x, m):                                       # 마스크 안 픽셀만으로 흐림
+        num = cv2.GaussianBlur(x * m[..., None], (0, 0), sig)
+        den = cv2.GaussianBlur(m, (0, 0), sig)[..., None]
+        return num / np.maximum(den, 1e-3)
+
+    LF, LP = mblur(Fs, 1 - m_in), mblur(Ps, m_in)
+    L = LF * (1 - w_lo[..., None]) + LP * w_lo[..., None]
+    up = lambda a: cv2.resize(a, (W, H), interpolation=cv2.INTER_LINEAR)
+    wh = up(w_hi)[..., None]
+    out = up(L)
+    out += (F - up(LF)) * (1 - wh)
+    out += (P - up(LP)) * wh
+    return Image.fromarray(np.clip(np.rint(out), 0, 255).astype(np.uint8), "RGB")
+
+
 def paste_photo(final_img: Image.Image, photo: Image.Image, yaw, pitch, hfov, vfov=None, feather=0.05,
                 mode="auto", detail=0.9) -> Image.Image:
     """최종 결과에 원본 사진을 다시 붙임 (사진에 있던 건 절대 안 사라짐).
@@ -359,6 +471,7 @@ def paste_photo(final_img: Image.Image, photo: Image.Image, yaw, pitch, hfov, vf
     detail:   원본 사진이 작아 늘리면 흐려질 때 — 저주파(색·형태)는 원본, 고주파(선명한 디테일)는 8K 업스케일 결과.
               결과의 사진 영역은 원래 사진에서 업스케일된 것이라 위치가 맞음. 사진 밖은 결과 그대로."""
     pasted = photo_composite(final_img, photo, yaw, pitch, hfov, vfov, feather=feather, color_strength=0.0)
+    pasted = harmonize_paste(final_img, pasted, photo.size, yaw, pitch, hfov, vfov)
     m, scale = photo_paste_mode(final_img.width, photo.width, hfov, mode)
     if m == "original":
         return pasted

@@ -94,6 +94,10 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
         api[lora_id + "0"]["_meta"] = {"title": "LoRA (이음새용, 약하게)"}
         api[seam_id]["inputs"]["model"] = [lora_id + "0", 0]
 
+    # 이음새 2차 다듬기: 1차(초록 띠 채우기)가 띠 가운데서 좌우를 따로 그려 '세로 선'이 남는 경우가 있어
+    # (특히 4스텝 distilled 모델) 1차 결과의 가운데 좁은 띠만 약하게 다시 그려 양쪽을 이어 줌
+    seam_second_pass(api, ids, st, s2)
+
     # 디테일 리파인 (LoRA 없이) — 업스케일 블러/뭉개짐 대신 실제 질감
     rf = st.get("refine")
     if rf and rf.get("enabled", True):
@@ -323,6 +327,44 @@ def green_seam_band(api: dict, ids: dict, st: dict) -> bool:
 
 
 
+def seam_second_pass(api: dict, ids: dict, st: dict, seed: int, band=192, feather=64, denoise=0.6) -> bool:
+    """test.json 이음새 패스 뒤(85 = 이음새 복원 합성, 아직 가운데로 옮긴 상태)에 좁은 띠를 약하게 한 번 더.
+    85 → 인코드 → 가운데 band 만 노이즈 → 같은 이음새 샘플러 설정(LoRA·스텝·cfg)·denoise 0.6 → 부드러운 마스크로 합성
+    → 원래대로 되돌리는 노드(105·106·107)가 이 결과를 쓰게 바꿈."""
+    comp, seam, vae_enc = "85", str(ids.get("sampler_seam")), "79"
+    if not all(k in api for k in (comp, seam, vae_enc, "105", "106", "107", "100")):
+        return False
+    W = int(api["100"]["inputs"].get("width", 2048))
+    H = int(api["100"]["inputs"].get("height", 1024))
+    x = W // 2 - band // 2
+    vae = api[vae_enc]["inputs"]["vae"]
+    sm = api[seam]["inputs"]
+    pos_cond = api.get("80", {}).get("inputs", {}).get("conditioning", sm["positive"])
+    N = lambda t, i, title: {"class_type": t, "inputs": i, "_meta": {"title": title}}
+    api["911"] = N("VAEEncode", {"pixels": [comp, 0], "vae": vae}, "이음새 2차 · 인코드")
+    api["912"] = N("SolidMask", {"value": 1.0, "width": band, "height": H}, "이음새 2차 · 좁은 띠")
+    api["913"] = N("MaskComposite", {"destination": ["100", 0], "source": ["912", 0], "x": x, "y": 0, "operation": "add"},
+                   "이음새 2차 · 띠 위치(가운데)")
+    api["914"] = N("SetLatentNoiseMask", {"samples": ["911", 0], "mask": ["913", 0]}, "이음새 2차 · 띠만 다시")
+    api["915"] = N("ReferenceLatent", {"conditioning": pos_cond, "latent": ["911", 0]}, "이음새 2차 · 참조")
+    api["916"] = N("KSampler", {"model": sm["model"], "positive": ["915", 0], "negative": sm["negative"],
+                                "latent_image": ["914", 0], "seed": int(seed) + 1, "steps": sm.get("steps", 20),
+                                "cfg": sm.get("cfg", 4.0), "sampler_name": sm.get("sampler_name", "euler"),
+                                "scheduler": sm.get("scheduler", "simple"), "denoise": float(denoise)},
+                   "이음새 2차 · 약하게 다시 그림")
+    api["917"] = N("VAEDecode", {"samples": ["916", 0], "vae": vae}, "이음새 2차 · 디코드")
+    api["918"] = N("FeatherMask", {"mask": ["912", 0], "left": feather, "top": 0, "right": feather, "bottom": 0},
+                   "이음새 2차 · 띠 가장자리 부드럽게")
+    api["919"] = N("MaskComposite", {"destination": ["100", 0], "source": ["918", 0], "x": x, "y": 0, "operation": "add"},
+                   "이음새 2차 · 부드러운 띠")
+    api["920"] = N("ImageCompositeMasked", {"destination": [comp, 0], "source": ["917", 0], "mask": ["919", 0],
+                                            "x": 0, "y": 0, "resize_source": False}, "이음새 2차 · 합성")
+    for k in ("105", "106"):
+        api[k]["inputs"]["image"] = ["920", 0]
+    api["107"]["inputs"]["destination"] = ["920", 0]
+    return True
+
+
 def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
     """1차 샘플러(31)의 latent 에 노이즈 마스크를 걸어 사진 부분 latent 를 그대로 유지."""
     smp = str(ids.get("sampler_main"))
@@ -393,8 +435,10 @@ def video_rect_canvas(ui) -> tuple[int, int]:
 
 
 def fill_video_node(template_ui: dict, *, image: str, positive: str, negative: str, seconds=4, lora_strength=None,
-                    seed=None, prefix="VR360/flood", mask_image: str | None = None, rect: tuple | None = None):
-    """노드 파일(UI)에 값 넣기 → (채운 UI, 시드, 정보). rect = (x, y, w, h) — 1133 캔버스 좌표."""
+                    seed=None, prefix="VR360/flood", mask_image: str | None = None, rect: tuple | None = None,
+                    crop: dict | None = None):
+    """노드 파일(UI)에 값 넣기 → (채운 UI, 시드, 정보). rect = (x, y, w, h) — 1133 캔버스 좌표.
+    crop = crop_plan() 결과 — 크롭 생성 노드 파일(video_has_crop)일 때 필요."""
     ui = copy.deepcopy(template_ui)
     ids = VIDEO_IDS
     seed = int(seed if seed is not None else random.randint(0, 2**31 - 1))
@@ -427,6 +471,10 @@ def fill_video_node(template_ui: dict, *, image: str, positive: str, negative: s
                     ui_set(ui, ids["rect_feather"], k, lim)
     else:
         raise ValueError("노드 파일에서 마스크 노드(1162 LoadImage 또는 1134 SolidMask + 1136 MaskComposite)를 못 찾았어요")
+    if video_has_crop(ui):
+        if not crop:
+            raise ValueError("크롭 생성 노드 파일에는 잘라낼 범위(crop)가 필요해요")
+        fill_crop(ui, crop)
     k = 0
     for n in ui["nodes"]:
         if n["type"] == "SaveVideo":
@@ -434,7 +482,7 @@ def fill_video_node(template_ui: dict, *, image: str, positive: str, negative: s
             ui_set(ui, n["id"], "filename_prefix", f"{prefix}_{k}")
     fps_n = _ui_node(ui, ids["fps"])
     fps = int((fps_n or {}).get("widgets_values_named", {}).get("value", 24))
-    return ui, seed, {"mode": mode, "seconds": secs, "fps": fps, "frames": secs * fps + 1, "rect": rect}
+    return ui, seed, {"mode": mode, "seconds": secs, "fps": fps, "frames": secs * fps + 1, "rect": rect, "crop": crop}
 
 
 def video_node_api(filled_ui: dict) -> tuple[dict, list]:
@@ -476,3 +524,97 @@ def video_node_api(filled_ui: dict) -> tuple[dict, list]:
             saves.append({"node": k, "audio": "audio" in src.get("inputs", {})})
     saves.sort(key=lambda s: (not s["audio"], s["node"]))          # 소리 있는 것 먼저
     return api, saves
+
+
+# ----------------------------------------------------------------------------- 크롭 생성 노드 파일 (event_cropgen_*.json)
+# 칠한 범위만 원본 360(8K)에서 잘라 일반 영상으로 고해상도 생성(2단계) → 칠한 곳 밖은 사진 그대로 → 4K 360 원래 자리에 붙임.
+# 장면마다 다른 값(자를 범위·생성 크기·붙일 자리)은 칠한 마스크로 계산해서 아래 노드에 넣음 (장면 값은 노드 파일에 두지 않음).
+#   1202 ImageCrop(원본) · 1203/1204 생성 크기(2단계/1단계) · 1208 CropMask(마스크 2048 좌표)
+#   1210/1212 마스크 크기(1단계/2단계) · 1219 4K 크기 · 1221 4K 붙일 자리 · 1218 4K 360 (4096x2048 고정)
+VIDEO_CROP_IDS = {"src_crop": 1202, "gen_hi": 1203, "gen_lo": 1204, "mask_crop": 1208, "mask_lo": 1210,
+                  "mask_hi": 1212, "back_scale": 1219, "paste": 1221, "full": 1218}
+CROP_MAX_PIXELS = 2560 * 1088          # 2단계 생성 크기 상한 (GPU 부담 기준)
+OUT_W, OUT_H = 4096, 2048              # 최종 360 영상
+
+LTX_CROP_POS = ("Wide-angle photorealistic nature video, locked-off static camera, no camera movement. "
+                "The video starts exactly like the input photo. {event} "
+                "Natural real-time speed, no fast motion. "
+                "{keep} stay perfectly still. Clear liquid water with sharp detailed ripples, spray and foam that follow the flow.")
+LTX_CROP_NEG = ("camera movement, camera pan, zoom, dolly, rotation, shaking, morphing rocks, changing cliff, new structures, "
+                "warping background, floating objects, people, animals, thick fog, mist covering the scene, smoke, steam, "
+                "milky blurred water, frozen water, water flowing over dry ground, smooth sliding sheet of foam, "
+                "polygonal faceted texture, blocky artifacts, ghosting, semi-transparent overlay, trails, frame blending, "
+                "smeared texture, painterly, oversharpened, flickering, boiling textures, scene cut, text, subtitles, "
+                "watermark, music, speech, voices")
+
+
+def event_timeline(seconds) -> str:
+    """영상 길이에 맞춘 사건 시간표 (장면과 무관한 공통 문장). 길이를 늘리지 않고 사건의 크기·속도를 길이에 맞춰
+    시작 → 절정 → 끝(첫 화면과 같음)이 반드시 다 나오게 한다. 노드의 마지막 프레임 = 사진(1226)과 함께 씀."""
+    s = float(seconds)
+    a, b, c = round(s * 0.15, 1), round(s * 0.5, 1), round(s * 0.85, 1)
+    return (f"Timing for this {s:g}-second clip: 0-{a:g}s calm, identical to the input photo; "
+            f"{a:g}-{b:g}s the event appears and builds to its peak; {b:g}-{c:g}s it passes and subsides; "
+            f"{c:g}-{s:g}s everything has settled and looks exactly like the first frame. "
+            "The whole event happens and completely finishes inside the clip, sized to fit this short time; "
+            "nothing is cut off mid-action.")
+
+
+def video_has_crop(ui) -> bool:
+    n = _ui_node(ui, VIDEO_CROP_IDS["src_crop"])
+    return n is not None and n["type"] == "ImageCrop" and n.get("mode", 0) not in (2, 4)
+
+
+def crop_plan(mask, src_size, *, margin=0.12, max_pixels=CROP_MAX_PIXELS, min_aspect=0.6, max_aspect=3.0):
+    """칠한 마스크(PIL L, 보통 2048x1024) → 자를 범위·생성 크기·4K 붙일 자리.
+    마스크 범위에 여유를 붙이고, 생성 크기(64 배수, 상한 max_pixels)와 같은 비율로 맞춤."""
+    import numpy as np
+    MW, MH = mask.size
+    m = np.asarray(mask.convert("L")) > 127
+    ys, xs = np.nonzero(m)
+    if not len(xs):
+        return None
+    x0, x1, y0, y1 = int(xs.min()), int(xs.max()) + 1, int(ys.min()), int(ys.max()) + 1
+    if x0 <= 2 and x1 >= MW - 2:
+        raise ValueError("칠한 범위가 360 좌우 끝에 걸쳐 있어요 — 한쪽으로 모아서 칠해 주세요")
+    pad = int(round(margin * max(x1 - x0, y1 - y0)))
+    x0, y0, x1, y1 = max(0, x0 - pad), max(0, y0 - pad), min(MW, x1 + pad), min(MH, y1 + pad)
+    w, h = x1 - x0, y1 - y0
+    aspect = min(max_aspect, max(min_aspect, w / h))
+    gw = max(256, int((max_pixels * aspect) ** 0.5) // 64 * 64)
+    gh = max(256, int(round(gw / aspect / 64)) * 64)
+    while gw * gh > max_pixels:
+        gw -= 64
+    aspect = gw / gh                                   # 생성 크기 비율에 정확히 맞춤 (짧은 쪽을 넓힘)
+    if w / h < aspect:
+        w = min(MW, int(round(h * aspect)))
+        h = min(MH, int(round(w / aspect)))
+    else:
+        h = min(MH, int(round(w / aspect)))
+        w = min(MW, int(round(h * aspect)))
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    x = int(round(min(max(0, cx - w / 2), MW - w)))
+    y = int(round(min(max(0, cy - h / 2), MH - h)))
+    sx, sy = src_size[0] / MW, src_size[1] / MH
+    ox, oy = OUT_W / MW, OUT_H / MH
+    return {"mask": [x, y, w, h],
+            "src": [int(round(x * sx)), int(round(y * sy)), int(round(w * sx)), int(round(h * sy))],
+            "gen": [gw, gh], "gen_lo": [gw // 2, gh // 2],
+            "out": [int(round(x * ox)), int(round(y * oy)), int(round(w * ox)), int(round(h * oy))]}
+
+
+def fill_crop(ui, plan):
+    ids = VIDEO_CROP_IDS
+    x, y, w, h = plan["src"]
+    for k, v in (("x", x), ("y", y), ("width", w), ("height", h)):
+        ui_set(ui, ids["src_crop"], k, v)
+    x, y, w, h = plan["mask"]
+    for k, v in (("x", x), ("y", y), ("width", w), ("height", h)):
+        ui_set(ui, ids["mask_crop"], k, v)
+    for nid, (w, h) in ((ids["gen_hi"], plan["gen"]), (ids["mask_hi"], plan["gen"]),
+                        (ids["gen_lo"], plan["gen_lo"]), (ids["mask_lo"], plan["gen_lo"]),
+                        (ids["back_scale"], plan["out"][2:])):
+        ui_set(ui, nid, "width", int(w))
+        ui_set(ui, nid, "height", int(h))
+    ui_set(ui, ids["paste"], "x", int(plan["out"][0]))
+    ui_set(ui, ids["paste"], "y", int(plan["out"][1]))

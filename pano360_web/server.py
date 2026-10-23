@@ -21,6 +21,7 @@ import comfy
 from openai_client import OpenAIClient
 from storage import RunStore, InvalidRunPath
 import erp
+import event_compose
 import llm
 import workflow
 
@@ -109,8 +110,10 @@ class Studio:
         graphs.append(("8K 화질 개선 · 원본 사진 업스케일", workflow.build_photo_upscale("check.png", up, "VR360/check")[0]))
         vt = os.path.basename(self.cfg.get("video_template", ""))
         try:
+            dummy = {"mask": [0, 0, 512, 256], "src": [0, 0, 2048, 1024], "gen": [1024, 512], "gen_lo": [512, 256],
+                     "out": [0, 0, 1024, 512]}
             ui, _, _ = workflow.fill_video_node(self._video_template(), image="check.png", positive="x", negative="x",
-                                                mask_image="check.png", rect=(0, 0, 256, 256))
+                                                mask_image="check.png", rect=(0, 0, 256, 256), crop=dummy)
             graphs.append((f"360 영상 ({vt})", workflow.video_node_api(ui)[0]))
         except Exception as e:
             graphs.append((f"360 영상 ({vt})", {"_err": str(e)}))
@@ -299,6 +302,11 @@ class Studio:
                     ph_name = await backend.upload(await asyncio.to_thread(self._source_png, run_id), f"{run_id}_a{n:02d}_photo.png")
                     out_nodes["photo_up"] = workflow.add_photo_upscale(wf_api, ph_name, f"VR360/{run_id}_a{n:02d}",
                                                                        self.cfg["model_fallbacks"]["UpscaleModelLoader"][0])
+                for nid_, key, tag in (("108", "dbg_seam2k", "_dbg_2k_after_seam"),):    # 진단용: 이음새 복원 직후 2K
+                    if nid_ in wf_api:
+                        wf_api["973"] = workflow.node("SaveImage", {"images": [nid_, 0], "filename_prefix": f"VR360/{run_id}_a{n:02d}{tag}"},
+                                                      "진단 · 이음새 복원 직후 2K")
+                        out_nodes[key] = "973"
                 p["settings"] = {k: v for k, v in st.items() if k != "refine"}
             pid = await self._submit_workflow(backend, wf_api, os.path.join(adir, "workflow_api.json"))
         except Exception as e:
@@ -477,6 +485,22 @@ class Studio:
                                                               self.store.path(run_id, local))
                         att["photo_pasted"] = mode
                         print(f"[pano360] 원본 사진 다시 붙임: {mode} (사진이 최종보다 {scale:.2f}배 흐림)")
+                    df = next((x for x in st["files"] if x["node"] == out_nodes.get("dbg_seam2k")), None)
+                    if df:                           # 진단용 2K (이음새 선이 어느 단계에서 생기는지 확인)
+                        try:
+                            with open(self.store.path(run_id, f"a{n:02d}", "debug_2k_after_seam.png"), "wb") as fp:
+                                fp.write(await backend.fetch(df))
+                        except Exception as e:
+                            print(f"[pano360] 진단 2K 저장 실패: {e}")
+                    try:     # 좌우 이음새에 생긴 가는 세로선 지우기 (ComfyUI 결과에서 x=0 에 1~2px@2K 선이 나오는 경우)
+                        cols = await asyncio.to_thread(erp.fix_wrap_line, self.store.path(run_id, local))
+                        if cols:
+                            att["wrap_line_fixed"] = [cols[0], cols[-1]]
+                            print(f"[pano360] 이음새 세로선 지움: 열 {cols[0]}~{cols[-1]}")
+                        gap = await asyncio.to_thread(erp.match_wrap_tone, self.store.path(run_id, local))
+                        att["wrap_tone_gap"] = round(gap, 1)     # VR 에서 이음새 양쪽 밝기 차이가 띠처럼 보이지 않게
+                    except Exception as e:
+                        print(f"[pano360] 이음새 선 처리 실패: {e}")
                     try:
                         att["seam"] = await asyncio.to_thread(erp.wrap_seam_score, self.store.path(run_id, local))
                         print(f"[pano360] 좌우 이음새 {att['seam']}")
@@ -502,7 +526,9 @@ class Studio:
                       "value": st.get("value"), "max": st.get("max")})
 
     async def to_viewer(self, req):
-        """최종 JPG 를 Unity 뷰어 StreamingAssets 에 복사하고 photos.json 갱신."""
+        """최종 JPG 를 Unity 뷰어 StreamingAssets 에 복사하고 photos.json 갱신.
+        사건 영상(크롭 생성)이 있으면 세트로: X.jpg(사건이 정면에 오게 돌린 8K) + X_event.mp4 + X_event_mask.png
+        → 뷰어가 사진 → (칠한 범위만) 영상 → 사진으로 재생."""
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
         att = self.store.read(run_id)["attempts"][n - 1]
         f = next((x for x in att.get("files", []) if x.get("jpg")), None)
@@ -513,19 +539,37 @@ class Studio:
         if not os.path.isdir(vdir):
             return jresp({"error": f"뷰어 폴더가 없어요: {vdir}"}, 400)
         src = self.store.path(run_id, *f["jpg"].split("/")[3:])
-        name = os.path.basename(src)
-        await asyncio.to_thread(shutil.copyfile, src, os.path.join(vdir, name))
+        vid = (att.get("event") or {}).get("video") or {}
+        d = f"a{n:02d}/event"
+        names = []
+        if vid.get("state") == "done" and vid.get("crop_mode") and (vid.get("audio_url") or vid.get("silent_url")):
+            base = f"{run_id}_a{n:02d}"
+            shift = int(vid.get("shift", 0))
+            mp4 = self.store.path(run_id, *(vid.get("audio_url") or vid.get("silent_url")).split("?")[0].split("/")[3:])
+
+            def write_set():
+                event_compose.roll_image(src, os.path.join(vdir, base + ".jpg"), shift,
+                                         quality=int(self.cfg.get("jpg_quality", 95)), subsampling=0)
+                shutil.copyfile(mp4, os.path.join(vdir, base + "_event.mp4"))
+                shutil.copyfile(self.store.path(run_id, d, "mask_front.png"), os.path.join(vdir, base + "_event_mask.png"))
+            await asyncio.to_thread(write_set)
+            names = [base + ".jpg", base + "_event.mp4", base + "_event_mask.png"]
+        else:
+            name = os.path.basename(src)
+            await asyncio.to_thread(shutil.copyfile, src, os.path.join(vdir, name))
+            names = [name]
         lst = os.path.join(vdir, "photos.json")
         try:
             with open(lst, encoding="utf-8") as fp:
                 data = json.load(fp)
         except Exception:
             data = {"files": []}
-        if name not in data["files"]:
-            data["files"].append(name)
+        for nm in names:
+            if nm not in data["files"]:
+                data["files"].append(nm)
         with open(lst, "w", encoding="utf-8") as fp:
             json.dump(data, fp, ensure_ascii=False, indent=4)
-        return jresp({"ok": True, "path": os.path.join(vdir, name), "count": len(data["files"])})
+        return jresp({"ok": True, "path": os.path.join(vdir, names[0]), "files": names, "count": len(data["files"])})
 
     # ------------------------------------------------------------------ 영상화: 움직일 곳 (일부만) + 프롬프트
     MOTION_MODEL = {"base": "LTX-2.3-22B", "lora": "ltx-2.3-22b-lora-cinemagraph-0.9", "trigger": llm.MOTION_TRIGGER,
@@ -766,8 +810,9 @@ class Studio:
         return int(x0), int(y0), int(x1 - x0), int(y1 - y0)
 
     async def event_video_start(self, req):
-        """화질 올린 360 + 칠한 범위 + 프롬프트 → 사용자 노드 파일(video_template)에 값만 넣어 실행.
-        노드 파일이 사각 마스크(SolidMask+MaskComposite)면 칠한 범위의 좌표를, 마스크 그림(LoadImage)이면 그림을 넣음."""
+        """화질 올린 360 + 칠한 범위 + 프롬프트 → 노드 파일(video_template)에 값만 넣어 실행.
+        크롭 생성 노드(event_cropgen_*)면: 칠한 범위가 정면에 오게 사진·마스크를 돌리고(front_shift) → 칠한 범위만 잘라
+        고해상도로 생성 → 끝나면 서버가 4K 360 에 붙임(event_compose). 그 밖의 노드는 예전처럼 사각/그림 마스크만 넣음."""
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
         p = await req.json()
         meta = self.store.read(run_id)
@@ -785,34 +830,57 @@ class Studio:
             tmpl = self._video_template()
         except Exception as e:
             return jresp({"error": str(e)}, 400)
-        pos = (p.get("positive") or "").strip() or self._ltx360_prompt(att.get("event") or {})
-        neg = (p.get("negative") or "").strip() or workflow.LTX360_NEG
-        secs = max(2, min(8, int(p.get("seconds") or 4)))
+        crop_mode = workflow.video_has_crop(tmpl)
+        ev = att.get("event") or {}
+        secs = max(2, min(14, int(p.get("seconds") or 4)))
+        if crop_mode:
+            pos = (p.get("positive") or "").strip() or self._crop_prompt(ev)
+            pos = pos.rstrip() + " " + workflow.event_timeline(secs)          # 길이 안에 시작→절정→끝
+            neg = (p.get("negative") or "").strip() or workflow.LTX_CROP_NEG
+        else:
+            pos = (p.get("positive") or "").strip() or self._ltx360_prompt(ev)
+            neg = (p.get("negative") or "").strip() or workflow.LTX360_NEG
         mode = workflow.video_mask_mode(tmpl)
-        rect = None
-        if mode == "rect":
+        rect = crop = None
+        shift = 0
+        mask_send = mp
+        if crop_mode:                                  # 모든 사건은 정면 기준: 칠한 범위 가운데가 정면(360 가운데)에 오게 돌림
+            shift = await asyncio.to_thread(event_compose.front_shift, mp)
+            mask_send = self.store.path(run_id, d, "mask_front.png")
+            await asyncio.to_thread(event_compose.roll_image, mp, mask_send, shift)
+        elif mode == "rect":
             f = workflow._ui_node(tmpl, workflow.VIDEO_IDS["rect_feather"])
             pad = max((f or {}).get("widgets_values_named", {"left": 0}).values(), default=0) if f else 0
             rect = await asyncio.to_thread(self._mask_rect, mp, workflow.video_rect_canvas(tmpl), int(pad))
             if not rect:
                 return jresp({"error": "칠한 범위가 비어 있어요."}, 400)
 
-        def pano_jpg():                                   # 노드가 2K~4K 로 쓰므로 4K JPG 로 올림 (8K PNG 는 너무 큼)
+        def pano_jpg():
+            """크롭 생성은 원본(8K)에서 잘라야 선명하므로 원래 크기 그대로(돌려서), 그 밖은 4K 로 줄여 올림."""
             im = Image.open(src).convert("RGB")
-            if im.width > 4096:
+            if crop_mode:
+                if shift:
+                    im = Image.fromarray(np.roll(np.asarray(im), int(round(shift * im.width / 2048)), axis=1))
+            elif im.width > 4096:
                 im = im.resize((4096, 2048), Image.LANCZOS)
             b = io.BytesIO()
             im.save(b, "JPEG", quality=96)
-            return b.getvalue()
+            return b.getvalue(), im.size
         try:
-            name = await backend.upload(await asyncio.to_thread(pano_jpg), f"{run_id}_a{n:02d}_pano4k.jpg")
+            data, src_size = await asyncio.to_thread(pano_jpg)
+            if crop_mode:
+                crop = await asyncio.to_thread(lambda: workflow.crop_plan(Image.open(mask_send), src_size))
+                if not crop:
+                    return jresp({"error": "칠한 범위가 비어 있어요."}, 400)
+            name = await backend.upload(data, f"{run_id}_a{n:02d}_pano{'_front' if crop_mode else '4k'}.jpg")
             mname = None
             if mode == "image":
-                with open(mp, "rb") as fp:
-                    mname = await backend.upload(fp.read(), f"{run_id}_a{n:02d}_motion_mask.png")
+                with open(mask_send, "rb") as fp:
+                    mname = await backend.upload(fp.read(), f"{run_id}_a{n:02d}_motion_mask{'_front' if crop_mode else ''}.png")
             ui, seed, info = workflow.fill_video_node(tmpl, image=name, positive=pos, negative=neg, seconds=secs,
                                                       lora_strength=p.get("lora_strength"), seed=p.get("seed"),
-                                                      prefix=f"VR360/{run_id}_a{n:02d}_flood", mask_image=mname, rect=rect)
+                                                      prefix=f"VR360/{run_id}_a{n:02d}_flood", mask_image=mname, rect=rect,
+                                                      crop=crop)
             with open(self.store.path(run_id, d, "video_node.json"), "w", encoding="utf-8") as fp:
                 json.dump(ui, fp, ensure_ascii=False, indent=1)     # 값이 들어간 노드 파일 (ComfyUI 에서 그대로 열림)
             g, saves = workflow.video_node_api(ui)
@@ -820,7 +888,8 @@ class Studio:
         except Exception as e:
             return jresp({"error": comfy.explain_comfy_error(str(e))}, 502)
         vid = {"state": "running", "backend": bk, "prompt_id": pid, "saves": saves, "seed": seed, "seconds": secs,
-               "fps": info["fps"], "mask_mode": mode, "rect": rect, "template": os.path.basename(self.cfg.get("video_template", "")),
+               "fps": info["fps"], "mask_mode": mode, "rect": rect, "crop": crop, "shift": shift, "crop_mode": crop_mode,
+               "template": os.path.basename(self.cfg.get("video_template", "")),
                "node_url": f"/runs/{run_id}/{d}/video_node.json?t={int(time.time())}",
                "positive": pos, "negative": neg, "lora_strength": p.get("lora_strength"),
                "created": time.strftime("%Y-%m-%d %H:%M:%S")}
@@ -830,13 +899,45 @@ class Studio:
             self.store.write(run_id, meta)
         return jresp(vid)
 
+    def _crop_prompt(self, ev: dict) -> str:
+        """크롭 생성용 기본 Positive: 사건 만들기 내용(없으면 기본 물 넘침) + 제자리 유지할 것."""
+        if ev.get("event"):
+            event = ev["event"].strip().rstrip(".") + "." + (f" At the peak, {ev['peak'].strip().rstrip('.')}." if ev.get("peak") else "")
+        else:
+            event = workflow.LTX360_EVENT
+        keep = (ev.get("keep") or "The rocks, cliffs, trees and buildings").strip().rstrip(".")
+        return workflow.LTX_CROP_POS.format(event=event, keep=keep[:1].upper() + keep[1:])
+
+    async def _compose_event(self, run_id, n, crop_mp4, has_audio):
+        """크롭 영상 → 4K 360 (바탕 = 8K 사진을 같은 만큼 돌려 줄인 것, 칠한 범위 안만 영상, 끝은 사진으로)."""
+        d = f"a{n:02d}/event"
+        try:
+            meta = self.store.read(run_id)
+            att = meta["attempts"][n - 1]
+            vid = att["event"]["video"]
+            out = self.store.path(run_id, d, "flood_4k_audio.mp4" if has_audio else "flood_4k.mp4")
+            info = await asyncio.to_thread(event_compose.compose_crop_video, crop_mp4, self._final_path(run_id, att),
+                                           self.store.path(run_id, d, "mask_front.png"), vid["crop"], out,
+                                           fps=int(vid.get("fps", 24)), audio=has_audio, shift=int(vid.get("shift", 0)))
+            url = f"/runs/{run_id}/{d}/{os.path.basename(out)}?t={int(time.time())}"
+            upd = {"state": "done", "composed": info, "finished": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   ("audio_url" if has_audio else "silent_url"): url}
+        except Exception as e:
+            upd = {"state": "error", "error": f"4K 360 합성 실패: {e}"}
+        async with self.locks.setdefault(run_id, asyncio.Lock()):
+            meta = self.store.read(run_id)
+            v = meta["attempts"][n - 1].setdefault("event", {}).setdefault("video", {})
+            v.update(upd)
+            self.store.write(run_id, meta)
+
     async def event_video_status(self, req):
-        """진행 확인. 끝나면 노드의 영상 출력(SaveVideo)을 받아 작업 폴더에 저장."""
+        """진행 확인. 끝나면 노드의 영상 출력(SaveVideo)을 받아 저장.
+        크롭 생성이면 받은 크롭 영상을 4K 360 에 붙이는 동안 'composing' → 끝나면 'done'."""
         run_id, n = req.match_info["run_id"], int(req.match_info["n"])
         vid = (self.store.read(run_id)["attempts"][n - 1].get("event") or {}).get("video")
         if not vid:
             return jresp({"state": "none"})
-        if vid["state"] in ("done", "error"):
+        if vid["state"] in ("done", "error", "composing"):
             return jresp(vid)
         backend = self.backends.get(vid["backend"])
         if backend is None:
@@ -851,18 +952,34 @@ class Studio:
             try:
                 d = f"a{n:02d}/event"
                 t = int(time.time())
+                got = []
                 for s in saves:
                     f = next((x for x in st["files"] if x["node"] == s["node"]), None)
                     if not f:
                         continue
-                    fn = f"flood_{s['node']}{'_audio' if s['audio'] else ''}.mp4"
+                    fn = f"{'crop' if vid.get('crop_mode') else 'flood'}_{s['node']}{'_audio' if s['audio'] else ''}.mp4"
                     with open(self.store.path(run_id, d, fn), "wb") as fp:
                         fp.write(await backend.fetch(f))
-                    key = "audio_url" if s["audio"] and not vid.get("audio_url") else "silent_url" if not vid.get("silent_url") else None
-                    if key:
-                        vid[key] = f"/runs/{run_id}/{d}/{fn}?t={t}"
-                if not vid.get("silent_url") and not vid.get("audio_url"):
+                    got.append((fn, s["audio"]))
+                    if not vid.get("crop_mode"):
+                        key = "audio_url" if s["audio"] and not vid.get("audio_url") else "silent_url" if not vid.get("silent_url") else None
+                        if key:
+                            vid[key] = f"/runs/{run_id}/{d}/{fn}?t={t}"
+                if not got:
                     raise RuntimeError("결과 영상이 없어요")
+                if vid.get("crop_mode"):
+                    fn, has_audio = got[0]                       # 소리 있는 것 먼저 (video_node_api 정렬)
+                    vid.update(state="composing", crop_file=fn,
+                               progress={"state": "running", "node_title": "4K 360 에 붙이는 중"})
+                    async with self.locks.setdefault(run_id, asyncio.Lock()):
+                        meta = self.store.read(run_id)
+                        meta["attempts"][n - 1].setdefault("event", {})["video"] = vid
+                        self.store.write(run_id, meta)
+                    task = asyncio.create_task(self._compose_event(run_id, n, self.store.path(run_id, d, fn), has_audio))
+                    self.tasks = getattr(self, "tasks", set())
+                    self.tasks.add(task)
+                    task.add_done_callback(self.tasks.discard)
+                    return jresp(vid)
                 vid.update(state="done", finished=time.strftime("%Y-%m-%d %H:%M:%S"))
             except Exception as ex:
                 vid.update(state="error", error=f"결과 받기 실패: {ex}")
