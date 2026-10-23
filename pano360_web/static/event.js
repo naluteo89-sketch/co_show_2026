@@ -2,11 +2,13 @@
 // LLM 이 사건 위치·내용·프롬프트를 정하고 사건 화면(16:9)을 준다. 360 위에 움직일 범위(마스크)를 칠해 PNG 로.
 // 영상 생성·합성은 ComfyUI(LTX) 쪽에서 한다.
 
+import {api, post, esc} from "./api.js";
+import {$, errHtml, fillBackends, copyText} from "./dom.js";
+
 const KEYS = ["yaw", "pitch", "hfov", "calm_start", "event", "peak", "calm_end", "keep"];
 const NUM = new Set(["yaw", "pitch", "hfov"]);
 
-export function setupEvent({api, post, esc}) {
-  const $ = id => document.getElementById(id);
+export function setupEvent() {
   let runId = null, n = null, ev = null, edited = false;
 
   function render() {
@@ -40,7 +42,7 @@ export function setupEvent({api, post, esc}) {
       ev = await post(`/api/run/${runId}/attempt/${n}/event`, {note: $("enote").value, seconds: +$("esec").value, model});
       $("estate").textContent = `${ev.model} · 사건 화면과 프롬프트를 만들었어요.`;
       render();
-    } catch (e) { $("estate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { $("estate").innerHTML = errHtml(e.message); }
     $("eplan").disabled = false;
   };
 
@@ -53,13 +55,12 @@ export function setupEvent({api, post, esc}) {
       ev = await post(`/api/run/${runId}/attempt/${n}/event/update`, body);
       $("estate").textContent = "저장했어요.";
       render();
-    } catch (e) { $("estate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { $("estate").innerHTML = errHtml(e.message); }
     $("esave").disabled = false;
   };
 
   $("ecp").onclick = async () => {
-    try { await navigator.clipboard.writeText($("e_pos").value); $("estate").textContent = "Positive 를 복사했어요."; }
-    catch { $("estate").textContent = "복사하지 못했어요. 칸에서 직접 복사하세요."; }
+    await copyText($("e_pos").value, $("estate"), "Positive 를 복사했어요.");
   };
 
   // ---- 움직일 범위 칠하기 (360 그림 위, 흰색 = 영상)
@@ -101,7 +102,7 @@ export function setupEvent({api, post, esc}) {
     return r;
   }
   $("emsave").onclick = async () => {
-    try { await saveMask(); } catch (e) { $("emstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    try { await saveMask(); } catch (e) { $("emstate").innerHTML = errHtml(e.message); }
   };
   function setMaskLink(url) {
     $("emdl").classList.toggle("hidden", !url);
@@ -125,15 +126,12 @@ export function setupEvent({api, post, esc}) {
         im.src = b.mask;
         $("emstate").textContent = "저장된 범위를 불러왔어요";
       } else $("emstate").textContent = "움직일 곳을 칠하고 '범위 저장'을 누르세요";
-    } catch (e) { $("emstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { $("emstate").innerHTML = errHtml(e.message); }
   }
 
   // ---- 360 전체 영상 프롬프트 (LTX + 360 LoRA 용) 복사
   let ltxDefaults = {};
-  const copyTo = async (txt, what) => {
-    try { await navigator.clipboard.writeText(txt); $("eltxstate").textContent = `${what} 를 복사했어요.`; }
-    catch { $("eltxstate").textContent = "복사하지 못했어요. 칸에서 직접 복사하세요."; }
-  };
+  const copyTo = (txt, what) => copyText(txt, $("eltxstate"), `${what} 를 복사했어요.`);
   $("eltxcp").onclick = () => copyTo($("eltxpos").value, "Positive");
   $("eltxcn").onclick = () => copyTo($("eltxneg").value, "Negative");
 
@@ -153,7 +151,7 @@ export function setupEvent({api, post, esc}) {
       return;
     }
     $("evgo").disabled = false;
-    if (v.state === "error") { $("evstate").innerHTML = `<span class="err">${esc(v.error || "실패")}</span>` + nodeLink; return; }
+    if (v.state === "error") { $("evstate").innerHTML = errHtml(v.error || "실패") + nodeLink; return; }
     $("evstate").innerHTML = esc(`완료 · ${v.finished || ""}${maskTxt}`) + nodeLink;
     const main = v.audio_url || v.silent_url;
     if (!$("evvideo").src.includes(main.split("?")[0])) $("evvideo").src = main;
@@ -165,7 +163,7 @@ export function setupEvent({api, post, esc}) {
   async function vidPoll() {
     if (!runId) return;
     try { vidShow(await api(`/api/run/${runId}/attempt/${n}/event/video`)); }
-    catch (e) { $("evstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; vTimer = setTimeout(vidPoll, 8000); }
+    catch (e) { $("evstate").innerHTML = errHtml(e.message); vTimer = setTimeout(vidPoll, 8000); }
   }
   $("evgo").onclick = async () => {
     $("evgo").disabled = true; $("evstate").textContent = "범위·이미지를 올리고 작업을 보내는 중…";
@@ -174,7 +172,7 @@ export function setupEvent({api, post, esc}) {
       vidShow(await post(`/api/run/${runId}/attempt/${n}/event/video`, {
         backend: $("evbackend").value, seconds: +$("evsec").value, lora_strength: +$("evlora").value,
         positive: $("eltxpos").value, negative: $("eltxneg").value}));
-    } catch (e) { $("evstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; $("evgo").disabled = false; }
+    } catch (e) { $("evstate").innerHTML = errHtml(e.message); $("evgo").disabled = false; }
   };
 
   return {
@@ -186,10 +184,7 @@ export function setupEvent({api, post, esc}) {
       $("eltxpos").value = lp.positive || ""; $("eltxneg").value = lp.negative || ""; $("eltxstate").textContent = "";
       loadBase();
       if (cfg && cfg.backends && !$("evbackend").options.length) {
-        $("evbackend").innerHTML = cfg.backends.map(b =>
-          `<option value="${esc(b.name)}">${esc(b.label)}${b.ok ? "" : " (연결 안 됨)"}</option>`).join("");
-        const pref = cfg.backends.find(b => b.name === cfg.default_backend && b.ok) || cfg.backends.find(b => b.ok);
-        if (pref) $("evbackend").value = pref.name;
+        fillBackends($("evbackend"), cfg);
       }
       const v = ev && ev.video;
       if (v && v.seconds) $("evsec").value = String(v.seconds);

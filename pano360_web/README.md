@@ -3,7 +3,7 @@
 사진 한 장 → **LLM(OpenAI)이 프롬프트·배치 분석** → ERP 컨트롤 이미지 → **ComfyUI(로컬/Comfy Cloud)** → 360 이미지
 
 프롬프트를 사람이 매번 쓰는 대신, LLM이 사진을 보고 재료(장면·조명·네거티브·이음새 요소·수평선·화각)를 JSON으로 주면
-서버가 고정 문구(LoRA 트리거, 조명 일관성, 공통 네거티브)와 합쳐 `test_quest3.json` 워크플로에 넣어 실행합니다.
+서버가 고정 문구(LoRA 트리거, 조명 일관성, 공통 네거티브)와 합쳐 `comfy_nodes/image/test_quest3.json` 워크플로에 넣어 실행합니다.
 
 ## 흐름
 ```
@@ -17,7 +17,7 @@
 모든 시도는 `runs/<날짜-시간>/meta.json`에 프롬프트·배치·시드·결과와 함께 남아서 비교하고 다시 불러올 수 있어요.
 
 ## 설치·실행 (Windows)
-1. `pano360_web` 폴더를 `C:\co_show_2026\` 안에 둡니다 (워크플로는 `../test_quest3.json`).
+1. `pano360_web` 폴더를 `C:\co_show_2026\` 안에 둡니다 (노드 파일은 `../comfy_nodes/image/`, `../comfy_nodes/video/`).
 2. Python 3.10 이상을 사용합니다. `pano360_web` 폴더에서 `python -m pip install -r requirements.txt`로 의존성을 설치합니다.
    ComfyUI 파이썬을 쓰는 경우에도 aiohttp, Pillow, numpy가 설치되어 있는지 확인합니다.
 3. 키는 `C:\keydata`에서 자동으로 읽어요 (`config.json`):
@@ -34,7 +34,8 @@
 |---|---|
 | `openai_model` | 분석에 쓸 모델. 이미지 입력 + Structured Outputs 지원 모델이어야 함. 환경변수 `OPENAI_MODEL`로 덮어쓰기 가능 |
 | `backends` | 이미지 생성할 ComfyUI 목록. `type: comfyui` = 일반 ComfyUI 서버 (기본: `cloud` → `http://192.168.1.91:8000`, `local` → `http://127.0.0.1:8188`). 공식 Comfy Cloud를 쓰려면 `{"type": "comfy_cloud", "url": "https://cloud.comfy.org"}` 추가 (키: `comfy_cloud_key_file`) |
-| `workflow` | 실행할 워크플로 (UI 포맷 그대로, `widgets_values_named` 필요) |
+| `workflow` | 실행할 워크플로 (UI 포맷 그대로, `widgets_values_named` 필요). 기본 `../comfy_nodes/image/test_quest3.json` |
+| `video_template` | 사건 영상 노드 파일. 기본 `../comfy_nodes/video/event_cropgen_v1.json` (크롭 생성) |
 | `node_ids` | 값을 넣을 노드 번호. 워크플로를 고치면 여기도 맞추기 |
 | `default_yaw` | 사진을 붙일 가로 방향 (기본 -20°, 기존 워크플로 값) |
 
@@ -105,13 +106,13 @@
 - 결과 아래 **영역 마스크 PNG 받기**(360 크기, 흰색 = 움직일 곳). 영상 생성·합성은 웹에서 하지 않고 ComfyUI(LTX) 에서 해요 (2026-10-21 정리).
 
 ## LLM이 정하는 것 / 고정된 것
-| LLM (사진마다 다름) | 고정 (llm.py 상단) |
+| LLM (사진마다 다름) | 고정 (studio/llm.py 상단) |
 |---|---|
 | 장면 묘사(카메라 뒤·바닥·하늘 포함), 조명 표현, 피해야 할 조명, 장면별 실패 요소, 이음새에서 이어질 요소, 수평선 위치, 화각 추정, 한국어 요약·주의점 | LoRA 트리거 문장, 조명 일관성 문장, 공통 네거티브, 이음새 프롬프트 틀 |
 
 - 화각: EXIF 35mm 환산 초점거리가 있으면 그걸 우선 사용, 없으면 LLM 추정
 - pitch: LLM이 찾은 수평선 위치와 화각으로 계산
-- 품질을 올리려면 `llm.py`의 `SYSTEM` 지시문을 다듬는 게 가장 효과적이에요. 결과가 좋았던 시도의 meta.json 을 예시로 넣는 것도 좋아요.
+- 품질을 올리려면 `studio/llm.py`의 `SYSTEM` 지시문을 다듬는 게 가장 효과적이에요. 결과가 좋았던 시도의 meta.json 을 예시로 넣는 것도 좋아요.
 
 ## 192.168.1.91 ComfyUI 서버 주의
 - 그 PC의 ComfyUI가 외부 접속을 허용해야 해요 (ComfyUI Desktop: 설정 > Server-Config > Host `0.0.0.0` / 포터블: `--listen 0.0.0.0 --port 8000`).
@@ -120,35 +121,60 @@
 
 ## (선택) 공식 Comfy Cloud 주의
 - Cloud에 `flux-2-klein-base-4b-fp8`, `qwen_3_4b`, `flux2-vae`, **`flux-2-klein-4B-360-erp-outpaint-lora_V1`** 가 있어야 해요 (LoRA 업로드 여부 확인).
-- 현재 구현의 API 경로: `/api/upload/image`, `/api/prompt`, `/api/job/{id}/status`, `/api/view`, `wss://.../ws`. 경로 변경은 `comfy.py`의 `CLOUD_PATHS`·`ComfyCloud`에서 관리합니다.
+- 현재 구현의 API 경로: `/api/upload/image`, `/api/prompt`, `/api/job/{id}/status`, `/api/view`, `wss://.../ws`. 경로 변경은 `studio/clients/comfy.py`의 `CLOUD_PATHS`·`ComfyCloud`에서 관리합니다.
 - 웹소켓으로 결과를 수신하고, 누락되면 history 조회를 시도합니다. 서버의 상태 API가 호출될 때 결과를 `runs/`에 저장합니다. 브라우저를 닫거나 다른 작업으로 이동하면 해당 작업의 조회가 중단되므로 다시 열어 완료 여부를 확인하세요.
 
 ## 파일
 ```
-main.py                  실행·설정 로딩 (python main.py)
-server.py                HTTP 라우트·작업 단계 조율·결과 후처리
-storage.py               작업 경로 검사·meta.json 읽기·원자적 저장
-credentials.py           환경변수·로컬 키 파일 읽기
-openai_client.py         OpenAI Responses 요청·응답 처리
-comfy.py                 ComfyUI·Comfy Cloud 통신·모델 선택·웹소켓 수명 관리
-api.py                   이전 import api 호출용 호환 진입점 (중복 구현 없음)
-llm.py                   LLM 지시문·응답 스키마·프롬프트 조립
-erp.py                   ERP 투영·극점 회전·사진 합성·JPG 저장
-workflow.py              생성·화질 개선·극점 보정 그래프 구성
-static/index.html        화면 구조
-static/style.css         화면 스타일
-static/app.js            업로드·분석·생성·결과 UI
-static/api.js            브라우저의 JSON 요청·오류 처리
-static/poller.js         작업 상태 조회·취소·늦은 응답 차단
-static/viewer.js         WebGL 360 뷰어
-requirements.txt         Python 의존성
-tests/                   서버 통합·워크플로·저장·폴링 회귀 검사
-runs/                    작업 기록 (자동 생성)
+main.py · run.bat         실행·설정 로딩 (python main.py)
+config.json               모델·실행 위치·노드 파일 경로(../comfy_nodes)·화질 설정
+studio/
+  server.py               aiohttp 앱 · 라우트 표
+  handlers/               기능별 요청 처리 (Studio = 아래 mixin 합친 클래스)
+    base.py               공통: 응답 · 작업 잠금 · 실행 위치/모델 고르기 · 파일 경로 · meta.json 갱신
+    info.py               화면 시작 정보 · 모델 점검 · 작업 목록
+    generate.py           업로드 · 분석 · 컨트롤 이미지 · 생성 제출 · 진행 확인 · 결과 후처리
+    pole.py               발밑·하늘 보정 (2단계)
+    photo.py              원본 사진 다시 붙이기 · 원본 자리 화질 맞추기
+    motion.py             영상화 (일부만 움직임) 계획·수정
+    event.py              사건 연출 · 범위 칠하기 · 노드 파일로 360 영상 · 4K 합성
+    viewer.py             Unity 뷰어로 복사 · photos.json 갱신
+  clients/
+    credentials.py        환경변수·로컬 키 파일 읽기
+    openai_client.py      OpenAI Responses 요청·응답 처리
+    comfy.py              ComfyUI·Comfy Cloud 통신·모델 선택·웹소켓 수명 관리
+  erp/                    360(ERP) 이미지 계산
+    projection.py         방향·카메라 평면·샘플링 공통
+    control.py            컨트롤 이미지 · 원본 보존 마스크 · Quest JPG
+    pole.py               극점 회전·합성
+    paste.py              원본 사진 다시 붙이기 · 톤 맞춤
+    seam.py               좌우 이음새 세로선·밝기·점수
+    regions.py            영상화·사건 영역 화면 · 격자/미리보기 · 마스크
+  workflow/               ComfyUI 그래프
+    core.py               UI → API 변환 · 노드 공통 · UI 위젯 값
+    generate.py           360 생성 그래프 (이음새 · 사진 보존 · 원본 업스케일)
+    enhance.py            8K 화질 개선 · 극점 그래프 · 타일 리파인
+    video.py              영상 노드 값 주입 · 크롭 생성 계획
+  video/
+    ffmpeg.py             ffmpeg 찾기 · 영상 정보
+    compose.py            크롭 생성 영상 → 4K 360 영상 합성
+  llm.py                  LLM 지시문·응답 스키마·프롬프트 조립 (영상 노드 프롬프트 포함)
+  storage.py              작업 경로 검사·meta.json 읽기·원자적 저장
+static/
+  index.html · style.css  화면 구조·스타일
+  app.js                  업로드·분석·생성·결과 UI
+  video.js · event.js     영상화 · 사건 영상 화면
+  dom.js                  화면 공통 도우미 ($ · 오류 표시 · 복사 · 실행 위치/모델 목록)
+  api.js · poller.js      JSON 요청·오류 처리 / 작업 상태 조회
+  viewer.js               WebGL 360 뷰어
+tests/                    서버 통합·워크플로·저장·폴링 회귀 검사
+_legacy/                  웹에서 뺀 예전 모듈 (효과 레이어·cinemagraph 합성 등, 실행 경로에서 안 씀)
+runs/                     작업 기록 (자동 생성)
 ```
 
 ## 구조 정리와 검증
 
-- 기존 `api.py`와 `comfy.py`에 있던 ComfyUI 구현을 `comfy.py` 하나로 통합했습니다. 이전 이름 `LocalComfy`, `CloudComfy`는 같은 클래스를 가리키는 호환 별칭입니다.
+- 2026-10-23 폴더 정리: 평평하던 모듈을 `studio/` 패키지로 기능별 분리, 웹에서 쓰지 않는 모듈은 `_legacy/`로, 노드 파일은 `../comfy_nodes/`로 옮겼습니다. 호환용 `api.py`·`LocalComfy`/`CloudComfy` 별칭은 없앴습니다.
 - 생성·화질 개선·극점 보정의 화면 제출과 진행률 처리를 공유합니다. 상태 조회는 이전 요청이 끝난 뒤 예약하여 느린 서버에 중복 요청이 쌓이지 않게 합니다.
 - 작업을 전환하면 상태 조회와 미리보기 예약을 중단하고, 이전 화면의 늦은 응답을 무시합니다.
 - 같은 작업의 분석·생성 제출·결과 저장은 서버 프로세스 안에서 순서대로 처리합니다. 여러 서버 프로세스가 같은 `runs/`를 공유하는 구성은 지원하지 않습니다.
@@ -173,12 +199,12 @@ node --test tests/poller.test.mjs
    사건 화면 `event/event_view.png`(2560×1440, 16:9) PNG 받기. 칸을 고치고 **수정 반영**하면 다시 만듦.
 2. **움직일 범위 (마스크)** — 360 위에 붓으로 칠하고 **범위 저장** → `event/mask.png`(2048×1024, 흰색 = 움직일 곳) → **마스크 PNG 받기**.
 3. **360 전체 영상 프롬프트** — LTX-2.3 + 360 LoRA 에 360 이미지를 그대로 넣을 때 쓸 Positive/Negative (사건 만들기 내용이 들어감) 복사.
-4. **영상 만들기 — 노드 파일로** — 사용자 노드 파일(`video_template`, 기본 `video_nodes/retest.json`)에 **값만 넣어** 그대로 실행.
+4. **영상 만들기 — 노드 파일로** — 사용자 노드 파일(`video_template`, 기본 `../comfy_nodes/video/event_cropgen_v1.json`)에 **값만 넣어** 그대로 실행. 크롭 생성 방식은 아래 '사건 영상 크롭 생성 (2026-10-23)' 참고.
    넣는 값(노드 id): 1131 원본 360(4K JPG 로 올림) · 1128/1112 Positive/Negative · 1102 길이 · 1132 LoRA 세기 · 1100 시드 · SaveVideo 이름.
    마스크: 노드에 1162 LoadImage 가 있으면 칠한 마스크 그림을, 없으면 사각 마스크(1134 SolidMask 크기 · 1136 MaskComposite 위치,
    1133 캔버스 기준)에 **칠한 범위를 감싸는 좌표**(+경계 흐림 폭)를 넣음. 계산 노드(ComfyMathExpression)는 숫자로 바꿔 보냄.
    값 넣은 노드 파일 `event/video_node.json` 을 받을 수 있음(ComfyUI 에서 그대로 열림). 결과 `event/flood_<노드>.mp4`.
-   - 모양 그대로 움직이게 하려면 `video_nodes/quest360_flood_mask_inpaint_4k.json`(마스크 그림 + 인페인팅)을 `video_template` 로.
+   - 360 전체에 사각 마스크로 돌리려면 `../comfy_nodes/video/retest.json`, 모양 그대로 움직이게 하려면 `../comfy_nodes/video/quest360_flood_mask_inpaint_4k.json`(마스크 그림 + 인페인팅)을 `video_template` 로.
 - 서버 모델 목록(object_info)에 없는 파일은 막지 않고 그대로 보냄 (Comfy Cloud 에 직접 가져온 LoRA 는 목록에 안 나올 수 있음).
 - 효과 레이어·사건 영상 합성·Quest 뷰어 영상 복사는 2026-10-21 웹에서 뺐어요.
 
@@ -188,6 +214,8 @@ node --test tests/poller.test.mjs
 - 이미 만든 결과: 결과 아래 **원본 자리 화질 맞추기** 버튼 → 원본 업스케일만 ComfyUI 로 돌려 다시 붙이고 JPG 도 다시 만듦.
 
 ## 원본 사진 다시 붙이기 (keep_photo.paste_mode)
+> 2026-10-23부터 `keep_photo.enabled` 기본값은 **false** (생성 결과를 그대로 씀). 켜면 아래처럼 동작해요.
+
 8K 로 키운 뒤 원본 사진을 같은 자리에 다시 붙임(사진에 있던 건 절대 안 사라짐). 원본이 작으면(1°당 픽셀이 8K 의 95% 미만)
 그대로 붙일 때 그 부분만 흐려지므로 **detail** 방식: 색·형태(저주파)는 원본 사진, 선명한 디테일(고주파)은 8K 업스케일 결과.
 - `paste_mode`: auto(기본) / original / detail, `detail_strength`: 사진 자리의 AI 디테일 세기 0~1 (기본 0.9, 결이 과하면 낮춤)
@@ -200,3 +228,20 @@ node --test tests/poller.test.mjs
   가져온 모델은 `올린사람__저장소__파일명` 이름이 되는데 자동으로 찾아 씀. 링크 목록은 `config.json` `model_sources`.
   - 360 아웃페인트 LoRA: https://huggingface.co/nomadoor/flux-2-klein-4B-360-erp-outpaint-lora (폴더 loras)
 - 업스케일러 `4x_NMKD-Siax_200k.pth` 가 Cloud 에 없으면 `model_fallbacks` 순서대로 대체 (점검에 → 로 표시).
+
+## 사건 영상 크롭 생성 (2026-10-23)
+`video_template` 가 `event_cropgen_*` 노드(ImageCrop 1202 가 있음)면 크롭 생성 방식으로 돌아요.
+1. **정면 기준**: 칠한 범위의 가로 중심(원형 평균)이 360 가운데에 오게 사진·마스크를 돌림 → `event/mask_front.png` (`video/compose.py` `front_shift`, 2048 기준 짝수 px).
+2. **범위만 생성**: 8K 원본을 돌린 그대로 올리고, 칠한 범위 + 여유 12% 를 잘라 생성. 생성 크기는 64 배수, 상한 2560×1088, 비율 0.6~3 (`workflow/video.py` `crop_plan`).
+   노드: LTX-2.3 22B distilled fp8 + Seamless-Equirectangular LTX2.3 LoRA + 공간 업스케일 ×2.
+3. **시간표**: Positive 끝에 길이에 맞춘 문장 추가 — 0~15% 잔잔(사진과 같음) → 50% 절정 → 85% 가라앉음 → 끝은 첫 화면과 같음 (`llm.py` `event_timeline`). 길이 2~14초.
+4. **4K 합성**: 받은 크롭 영상(`event/crop_<노드>.mp4`)을 서버가 ffmpeg 로 한 프레임씩 4096×2048 에 붙임 → `event/flood_4k_audio.mp4` / `flood_4k.mp4`.
+   바탕 = 8K 사진을 같은 만큼 돌려 4K 로 줄인 정지 화면, 마스크(경계 부드럽게) 안만 영상, 마지막 0.75초는 사진으로 서서히. H.264 CRF 18, 최대 40Mbps.
+   ComfyUI 안에서 4K 프레임을 붙이면 8초·넓은 범위에서 서버 메모리가 부족해서 붙이기를 서버로 옮겼어요. 합성 중 상태는 `composing`.
+5. **Quest 뷰어에 추가**: 사건 영상이 있으면 세트로 복사 — `<run>_aNN.jpg`(정면으로 돌린 8K) + `_event.mp4` + `_event_mask.png`.
+
+## 좌우 이음새 세로선 · 밝기 (2026-10-23)
+- **가는 세로선 지우기** (`erp/seam.py` `fix_wrap_line`): ComfyUI 결과의 x=0 에 1~2px@2K 세로선이 생기는 경우, 선 자리를 양옆 결을 거울처럼 이어 서서히 섞음. 고친 열은 `meta.json` 의 `wrap_line_fixed`.
+- **이음새 밝기 맞춤** (`erp/seam.py` `match_wrap_tone`): 줄마다 이음새 양쪽 평균 색 차이를 구해 384px 에 걸쳐 반씩 보정 → VR 에서 이음새가 띠처럼 보이지 않게. 보정 전 차이는 `wrap_tone_gap`.
+- 진단용으로 이음새 복원 직후 2K(`debug_2k_after_seam.png`)를 저장해, 선이 어느 단계에서 생기는지 확인할 수 있어요.
+- 비교 이미지: `../docs/analysis/seam_before_after.png`, `../docs/analysis/quest_view_seam_after_tone.jpg`

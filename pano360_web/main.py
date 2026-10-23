@@ -7,12 +7,10 @@ Pano360 Studio 실행 파일
 
 구성
     main.py      실행 (여기)
-    credentials.py / openai_client.py / comfy.py  키 읽기 · 외부 통신
-    server.py    웹 화면·라우트
-    llm.py       LLM 지시문 · 스키마 · 프롬프트 조립
-    erp.py       ERP 컨트롤 이미지 계산
-    workflow.py  ComfyUI UI 워크플로 → API 포맷 변환
-    config.json  설정 (키 경로, 모델, ComfyUI 주소, 노드 번호)
+    studio/      서버 패키지 (구성은 studio/__init__.py 참고)
+    static/      웹 화면
+    config.json  설정 (키 경로, 모델, ComfyUI 주소, 노드 파일, 노드 번호)
+    ../comfy_nodes/  ComfyUI 노드 파일 (이미지 생성 · 영상)
 """
 
 import argparse
@@ -24,8 +22,8 @@ import webbrowser
 
 from aiohttp import web
 
-from credentials import resolve_keys
-import server
+from studio import server
+from studio.clients.credentials import resolve_keys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERSION = "2026-10-20 keep-v3 (원본 사진 영역 유지 + 초록 이음새 + 이음새 리파인)"
@@ -35,10 +33,9 @@ def load_config(path):
     with open(path, encoding="utf-8") as f:
         cfg = json.load(f)
     cfg["openai_model"] = os.environ.get("OPENAI_MODEL") or cfg.get("openai_model")
-    wf = cfg["workflow"]
-    cfg["workflow"] = wf if os.path.isabs(wf) else os.path.normpath(os.path.join(HERE, wf))
-    rd = cfg.get("runs_dir", "runs")
-    cfg["runs_dir"] = rd if os.path.isabs(rd) else os.path.join(HERE, rd)
+    for key, default in (("workflow", None), ("runs_dir", "runs")):
+        v = cfg.get(key, default)
+        cfg[key] = v if os.path.isabs(v) else os.path.normpath(os.path.join(HERE, v))
     return cfg
 
 

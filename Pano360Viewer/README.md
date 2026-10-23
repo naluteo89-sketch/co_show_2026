@@ -52,6 +52,20 @@ adb push 내사진.jpg /sdcard/Android/data/com.witches.pano360/files/Photos/
 - 반복 재생·소리는 PanoViewer 의 `loopVideo`, `videoAudio` 로 설정. 헤드셋을 벗으면 일시정지, 다시 쓰면 이어서 재생
 - 재생 경로: VideoPlayer → RenderTexture(영상 크기, 밉맵 없음) → 사진과 같은 Equirect 셰이더
 
+## 사건 영상 세트 (사진 → 범위 안만 영상 → 사진)
+웹의 **Quest 뷰어에 추가**가 세 파일을 같은 이름으로 넣어요. 이름만 맞으면 직접 넣어도 돼요.
+
+| 파일 | 역할 |
+|---|---|
+| `X.jpg` | 8K 360 사진 (사건 범위가 정면에 오게 돌린 것) |
+| `X_event.mp4` | 4K 360 사건 영상 (마지막 프레임 = 사진) |
+| `X_event_mask.png` | 영상이 보일 범위 (흰색만 영상, 나머지는 고화질 사진 그대로). 목록에는 안 나옴 |
+
+- `PhotoSource` 가 `X_event.mp4` / `X_event_mask.png` 를 이름이 X 로 시작하는 사진에 붙여요. 짝이 없는 영상은 일반 360 영상으로 재생.
+- 끝날 때 **와이프**: 범위 가장자리부터 불규칙하게 벗겨지듯 사진으로 돌아가요. `PanoViewer` 의 `eventWipeOut`(기본 켜짐), `eventWipeDuration`(2.5초), `eventWipeIrregularity`(0.25).
+- 영상 화질 (2026-10-23, `../docs/patches/unity_video_filter.diff`): 셰이더가 영상만 살짝 낮은 밉맵(`_VideoLod` 0.4)에서 읽어 자글거림을 줄이고,
+  아주 고운 그레인(`_Grain` 0.02, 영상 프레임마다 바뀜)으로 압축 노이즈·밴딩을 덜 보이게 해요. 사진은 그대로 LOD 0.
+
 ## 조작
 
 | 동작 | 컨트롤러 | 핸드트래킹 | 에디터 |
