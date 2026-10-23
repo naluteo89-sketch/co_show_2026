@@ -30,7 +30,7 @@
   "distilled_profile": {"steps": 4, "partial_steps": 8, "cfg": 1.0},
   "ultrasharp_blend": 0.45,
   "tone_match": 0.6,
-  "keep_photo": {"enabled": true, "mask_feather": 0.04, "paste_feather": 0.05, "paste_mode": "auto", "detail_strength": 0.9, "upscale_photo": true},
+  "keep_photo": {"enabled": false, "mask_feather": 0.04, "paste_feather": 0.05, "paste_mode": "auto", "detail_strength": 0.9, "upscale_photo": true},
   "runs_dir": "runs",
   "erp_size": [2048, 1024],
   "default_yaw": -20,
