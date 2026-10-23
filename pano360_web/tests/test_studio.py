@@ -360,6 +360,31 @@ class MotionTests(unittest.TestCase):
         self.assertGreater(h[y, xe, 0], p[y, xe, 0] + 10)
         self.assertAlmostEqual(float(h[y, 256, 0]), float(p[y, 256, 0]), delta=3)  # 사진 가운데는 원본 그대로
 
+    def test_wrap_line_removed(self):
+        import erp, tempfile, os
+        from PIL import Image
+        rng = np.random.default_rng(0)
+        img = (rng.random((256, 1024, 3)) * 60 + 80).astype(np.uint8)
+        img[:, 2:5] = [200, 120, 20]                                    # 이음새 오른쪽에 주황 세로선
+        p = os.path.join(tempfile.mkdtemp(), "r.png"); Image.fromarray(img).save(p)
+        cols = erp.fix_wrap_line(p)
+        self.assertTrue(cols and min(cols) <= 2 and max(cols) >= 4)
+        out = np.asarray(Image.open(p)).astype(np.float32)
+        self.assertLess(abs(out[:, 3, 2].mean() - out[:, 30, 2].mean()), 15)   # 파랑 부족이 사라짐
+        self.assertEqual(erp.fix_wrap_line(p), [])                         # 선 없는 그림은 그대로
+        clean = os.path.join(os.path.dirname(p), "c.png"); Image.fromarray((rng.random((256, 1024, 3)) * 255).astype(np.uint8)).save(clean)
+        self.assertEqual(erp.fix_wrap_line(clean), [])
+
+    def test_wrap_tone_matched(self):
+        import erp, tempfile, os
+        from PIL import Image
+        img = np.full((128, 1024, 3), 100, np.uint8); img[:, 512:] = 140        # 이음새 양쪽 밝기 다름
+        p = os.path.join(tempfile.mkdtemp(), "t.png"); Image.fromarray(img).save(p)
+        self.assertGreater(erp.match_wrap_tone(p, width=256), 30)
+        out = np.asarray(Image.open(p)).astype(np.float32)
+        self.assertLess(abs(out[64, 0, 0] - out[64, -1, 0]), 3)                    # 이음새에서 같아짐
+        self.assertEqual(int(out[64, 400, 0]), 100)                                # 멀리는 그대로
+
     def test_photo_upscale_ids_do_not_clash_with_photo_lock(self):
         import workflow
         api = {"31": {"class_type": "KSampler", "inputs": {"latent_image": ["951", 0]}},
