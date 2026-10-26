@@ -1,0 +1,7 @@
+/* 5·6단계가 함께 쓰는 그림·영상 칸 */
+.moverlay{width:100%;border-radius:6px;border:1px solid var(--line);margin-top:10px;display:block;aspect-ratio:2/1;object-fit:cover;background:#000}
+.mgrid{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:14px}
+@media(max-width:900px){.mgrid{grid-template-columns:1fr}}
+.mcrop img{width:100%;border-radius:6px;border:1px solid var(--line)}
+.mrender{background:var(--panel2);border-radius:8px;padding:12px;margin-top:14px}
+.mvideo{width:100%;aspect-ratio:2/1;background:#000;border-radius:6px;border:1px solid var(--line)}

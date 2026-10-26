@@ -2,10 +2,17 @@
     "files": [
         "20261021-182729-a3f1_a02_8k.jpg",
         "20261021-182729-a3f1_a02_flood_4k_audio.mp4",
+<<<<<<< Updated upstream
         "20261022-141424-8b05_a01_360_live.mp4",
         "flood_1156_audio (1).mp4",
         "flood_1156_audio.mp4",
         "q1_event.mp4",
+=======
+        "20261022-141424-8b05_a01_360.jpg",
+        "20261022-141424-8b05_a01_360_event_mask.png",
+        "20261022-141424-8b05_a01_360_live.mp4",
+        "flood_1156_audio (1).mp4",
+>>>>>>> Stashed changes
         "q4.jpg",
         "q4_event.mp4",
         "q4_event_mask.png",

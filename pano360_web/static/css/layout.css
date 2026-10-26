@@ -1,0 +1,13 @@
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:17px;margin:0}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-size:12px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.chip.ok{color:var(--ok);border-color:#2a5a46}.chip.bad{color:var(--err);border-color:#5a2a2a}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:16px;max-width:1400px;margin:0 auto;padding:16px}
+@media(max-width:1000px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{font-size:14px;margin:0 0 12px;color:var(--muted);font-weight:600}
+.step{display:inline-block;width:20px;height:20px;border-radius:50%;background:var(--acc);color:#0b1020;text-align:center;font-size:12px;line-height:20px;margin-right:6px;font-weight:700}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.row>*{flex:1 1 160px}
+h1 .sub{font-weight:400;font-size:12px}

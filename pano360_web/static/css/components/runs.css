@@ -1,0 +1,4 @@
+.runs .r{display:flex;gap:8px;padding:8px;border-radius:6px;cursor:pointer;align-items:center}
+.runs .r:hover{background:var(--panel2)}
+.runs img{width:56px;height:42px;object-fit:cover;border-radius:4px}
+.runs .t{font-size:12px;line-height:1.35;overflow:hidden}

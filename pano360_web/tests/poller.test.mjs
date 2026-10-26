@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
-import {createPoller} from "../static/poller.js";
+import {createPoller} from "../static/js/core/poller.js";
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const deferred = () => {

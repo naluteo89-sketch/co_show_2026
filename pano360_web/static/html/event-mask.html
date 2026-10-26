@@ -1,0 +1,16 @@
+<div class="mrender" id="eltx">
+  <b>움직일 범위 (마스크)</b>
+  <div class="muted" style="font-size:12px;margin-top:4px">360 그림 위에 움직일 곳을 칠하고 '범위 저장' → 마스크 PNG(2048×1024, 흰색 = 움직일 곳)를 받아 ComfyUI 에 쓰세요. 좌우 끝은 이어져요.</div>
+  <div class="mpaint" id="epaint" style="margin-top:8px">
+    <img id="embase" class="moverlay" alt="결과 360" draggable="false">
+    <canvas id="emask" width="1024" height="512"></canvas>
+  </div>
+  <div class="row" style="margin-top:6px;align-items:center">
+    <div style="flex:0 0 220px"><label style="display:inline">붓 크기 <input id="ebrush" type="range" min="6" max="160" value="40" style="width:120px;vertical-align:middle"></label></div>
+    <div style="flex:0 0 auto"><button id="eerase">지우개</button></div>
+    <div style="flex:0 0 auto"><button id="eclear">전체 지우기</button></div>
+    <div style="flex:0 0 auto"><button class="primary" id="emsave">범위 저장</button></div>
+    <div style="flex:0 0 auto"><a id="emdl" class="hidden" download><button>마스크 PNG 받기</button></a></div>
+    <div style="flex:1 1 200px" id="emstate" class="muted"></div>
+  </div>
+</div>

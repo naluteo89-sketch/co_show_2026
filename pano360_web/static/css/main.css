@@ -1,0 +1,13 @@
+/* 스타일 묶음 — 새 컴포넌트를 만들면 components/ 에 파일을 두고 여기 한 줄 추가 */
+@import url("base.css");
+@import url("layout.css");
+@import url("components/request.css");
+@import url("components/target.css");
+@import url("components/upload.css");
+@import url("components/viewer.css");
+@import url("components/result.css");
+@import url("components/runs.css");
+@import url("components/media.css");
+@import url("components/motion.css");
+@import url("components/event.css");
+@import url("components/mcheck.css");

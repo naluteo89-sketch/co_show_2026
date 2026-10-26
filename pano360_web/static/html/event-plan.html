@@ -1,0 +1,40 @@
+<div class="evpart" id="eplanpart">
+<div class="note">잔잔하게 시작 → 물이 넘쳐 화면을 덮음 → 다시 잔잔하게 끝. LLM 이 연출과 영상 프롬프트를 만들고,
+  360 위에 움직일 범위를 칠해 마스크 PNG 로 받아요. 영상 생성은 ComfyUI(LTX) 에서 해요.</div>
+<label style="margin-top:10px">작업자 메모 (선택 · 원하는 연출)</label>
+<input id="enote" placeholder="예: 다리 아래로 폭포 물이 불어나 앞쪽 바위 위로 넘쳐 밀려왔다가 빠짐">
+<div class="row" style="margin-top:10px;align-items:center">
+  <div style="flex:0 0 120px"><select id="esec" title="길이"><option value="4">4초</option><option value="5" selected>5초</option><option value="6">6초</option></select></div>
+  <div style="flex:0 0 auto"><button class="primary" id="eplan">사건 만들기 (LLM)</button></div>
+  <div style="flex:1 1 200px" id="estate" class="muted"></div>
+</div>
+<div id="ebody">
+  <div class="note hidden" id="esummary"></div>
+  <div class="mgrid" style="margin-top:10px">
+    <div class="mcrop"><div id="eviewbox" class="hidden"><a id="eviewa" target="_blank"><img id="eview" alt="사건 화면"></a>
+      <div class="muted" style="font-size:12px">영상 모델에 넣을 사건 화면 (16:9) · <a id="eviewdl" download>PNG 받기</a></div>
+      <img id="eoverlay" alt="360 위치" class="moverlay" style="margin-top:8px"></div><div id="eviewnone" class="muted note">사건 화면은 '사건 만들기' 또는 아래 칸을 채우고 '수정 반영'을 누르면 만들어져요.</div></div>
+    <div>
+      <div class="row">
+        <div><label>yaw (°)</label><input id="e_yaw" type="number" step="1"></div>
+        <div><label>pitch (°)</label><input id="e_pitch" type="number" step="1"></div>
+        <div><label>가로 화각 (°)</label><input id="e_hfov" type="number" step="1" min="60" max="140"></div>
+      </div>
+      <label>시작 (잔잔, 영어)</label><input id="e_calm_start">
+      <label>사건 (영어, 시간 순서)</label><textarea id="e_event" style="min-height:70px"></textarea>
+      <label>절정 (영어)</label><input id="e_peak">
+      <label>끝 (다시 잔잔, 영어)</label><input id="e_calm_end">
+      <label>제자리에 있어야 할 것 (영어)</label><input id="e_keep">
+      <label style="margin-top:8px">Positive <span class="muted">(위 칸을 고치면 '수정 반영' 때 다시 만들어요)</span></label>
+      <textarea id="e_pos" style="min-height:120px"></textarea>
+      <label style="margin-top:8px">Negative</label>
+      <textarea id="e_neg" style="min-height:60px"></textarea>
+      <div class="row" style="margin-top:8px;align-items:center">
+        <div style="flex:0 0 auto"><button class="primary" id="esave">수정 반영</button></div>
+        <div style="flex:0 0 auto"><button id="ecp">Positive 복사</button></div>
+      </div>
+      <div class="muted" id="emeta" style="font-size:12px;margin-top:6px"></div>
+    </div>
+  </div>
+</div>
+</div>

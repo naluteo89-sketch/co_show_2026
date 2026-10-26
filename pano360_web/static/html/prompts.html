@@ -1,0 +1,32 @@
+<section class="card hidden" id="promptcard">
+  <h2><span class="step">3</span>프롬프트 (수정 가능)</h2>
+  <label>1차 아웃페인트 · Positive <span class="muted">(LoRA 트리거 문장으로 시작해야 해요)</span></label>
+  <textarea id="p_pos"></textarea>
+  <label style="margin-top:10px">1차 아웃페인트 · Negative</label>
+  <textarea id="p_neg"></textarea>
+  <label style="margin-top:10px">이음새 복원 · Positive</label>
+  <textarea id="p_spos" style="min-height:70px"></textarea>
+  <label style="margin-top:10px">이음새 복원 · Negative</label>
+  <textarea id="p_sneg" style="min-height:60px"></textarea>
+  <details><summary>LLM 원본 응답 (재료)</summary><pre id="raw"></pre></details>
+  <details style="margin-top:6px"><summary>생성 설정 (화질 실험용 · 시드 고정하고 하나씩 바꿔 비교)</summary>
+    <div class="row" style="margin-top:8px">
+      <div><label>steps</label><input id="g_steps" type="number" min="10" max="60"></div>
+      <div><label>CFG <span class="muted">(낮추면 덜 과장·덜 쨍함)</span></label><input id="g_cfg" type="number" step="0.1" min="1" max="8"></div>
+      <div><label>LoRA 강도</label><input id="g_lora" type="number" step="0.05" min="0" max="1.5"></div>
+      <div><label>이음새 denoise</label><input id="g_seam" type="number" step="0.05" min="0.3" max="1"></div>
+    </div>
+  </details>
+
+  <div class="row" style="margin-top:14px">
+    <div><label>실행 위치</label><select id="backend"></select></div>
+    <div><label>시드 (1차)</label><input id="seed1" placeholder="비우면 랜덤"></div>
+    <div><label>시드 (이음새)</label><input id="seed2" placeholder="비우면 랜덤"></div>
+    <div><button class="primary" id="gen" style="width:100%">360 이미지 생성</button></div>
+  </div>
+  <div class="row" style="margin-top:6px;align-items:center">
+    <div style="flex:0 0 auto"><button id="mcheck" title="고른 실행 위치에 필요한 모델(LoRA·업스케일러·LTX)이 다 있는지 확인">모델 점검</button></div>
+    <div class="muted" style="font-size:12px">Comfy Cloud 에 없는 LoRA 는 Cloud 의 Models → Import 에 링크를 넣어 가져와요.</div>
+  </div>
+  <div id="mcheckout" class="mcheck hidden"></div>
+</section>

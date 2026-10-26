@@ -139,9 +139,11 @@ class StudioTests(unittest.IsolatedAsyncioTestCase):
         return await self.request_json("POST", "/api/upload", data=form)
 
     async def test_static_modules_and_config(self):
-        for path in ["/", "/static/style.css", "/static/app.js", "/static/api.js",
-                     "/static/poller.js", "/static/viewer.js", "/static/dom.js",
-                     "/static/video.js", "/static/event.js"]:
+        static = ROOT / "static"
+        files = [p.relative_to(static).as_posix() for p in static.rglob("*")
+                 if p.is_file() and p.suffix in (".js", ".css", ".html") and "_old" not in p.parts]
+        self.assertIn("js/main.js", files)
+        for path in ["/"] + [f"/static/{f}" for f in files]:
             response = await self.client.get(path)
             self.assertEqual(response.status, 200, path)
             self.assertTrue(await response.read())
@@ -332,6 +334,31 @@ class ImageAndVideoTests(unittest.TestCase):
     def test_event_timeline_fits_clip(self):
         t = llm.event_timeline(6)
         self.assertIn("0-0.9s", t); self.assertIn("5.1-6s", t); self.assertIn("finishes inside the clip", t)
+
+    def test_ambient_prompt_and_live_plan(self):
+        import workflow, event_compose
+        self.assertIn("loops", workflow.ambient_timeline(6))
+        self.assertIn("ordinary ongoing motion", workflow.event_timeline(6))     # 사건 전에도 평소 흐름은 보이게
+        pl = event_compose.live_plan(145, 145, 24, calm_seconds=8, fade=12)
+        self.assertEqual(pl["loop_len"], 133)
+        self.assertEqual(pl["total"], pl["event_start"] + 145)
+        self.assertGreaterEqual(pl["event_start"], 6 * 24)
+
+    def test_build_live_wraps_seamlessly(self):
+        import event_compose, subprocess, tempfile, os
+        exe = event_compose.ffmpeg_exe()
+        with tempfile.TemporaryDirectory() as d:
+            a, e, o = (os.path.join(d, x) for x in ("a.mp4", "e.mp4", "o.mp4"))
+            subprocess.run([exe, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x96:r=24:d=4",
+                            "-c:v", "libx264", "-crf", "8", "-pix_fmt", "yuv420p", a], check=True)
+            subprocess.run([exe, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x96:r=24:d=3",
+                            "-c:v", "libx264", "-crf", "8", "-pix_fmt", "yuv420p", e], check=True)
+            pl = event_compose.build_live(a, e, o, calm_seconds=5, audio=False)
+            fr = list(event_compose._decode(o, (160, 96), exe))
+            self.assertEqual(len(fr), pl["total"])
+            step = np.median([np.abs(fr[i].astype(float) - fr[i - 1]).mean() for i in range(1, pl["event_start"])])
+            wrap = np.abs(fr[0].astype(float) - fr[-1]).mean()
+            self.assertLess(wrap, step * 2.5 + 2)                                # 끝 → 처음이 한 프레임 움직임 정도
 
     def test_seam_second_pass_and_paste_harmonize(self):
         import json

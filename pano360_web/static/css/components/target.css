@@ -1,0 +1,4 @@
+/* 5·6단계 '대상 결과' 고르기 */
+.card h2 .target{display:inline-flex;gap:6px;align-items:center;margin-left:10px;font-weight:400}
+.card h2 .target label{display:inline;margin:0}
+.card h2 .targetsel{width:auto;min-width:220px;padding:3px 8px;font-size:12px}

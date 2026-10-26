@@ -165,6 +165,40 @@ export function setupEvent() {
     try { vidShow(await api(`/api/run/${runId}/attempt/${n}/event/video`)); }
     catch (e) { $("evstate").innerHTML = errHtml(e.message); vTimer = setTimeout(vidPoll, 8000); }
   }
+  // ---- 평소 움직임 (반복용): 같은 범위, 사건 없이 평소 흐름만 → 뷰어에서 평소 → 사건 → 평소 로 이어 붙임
+  let aTimer = null;
+  function ambShow(v) {
+    clearTimeout(aTimer);
+    const vEl = $("evambvideo");
+    if (!v || v.state === "none") { $("evamb").disabled = false; vEl.classList.add("hidden"); return; }
+    if (v.state === "running" || v.state === "composing") {
+      const pr = v.progress || {};
+      $("evamb").disabled = true;
+      $("evambstate").textContent = `평소 움직임 만드는 중… ${pr.state === "running" ? (pr.node_title || pr.node || "") + (pr.max ? ` ${pr.value}/${pr.max}` : "") : "대기 중"}`;
+      aTimer = setTimeout(ambPoll, 5000);
+      return;
+    }
+    $("evamb").disabled = false;
+    if (v.state === "error") { $("evambstate").innerHTML = `<span class="err">${esc(v.error || "실패")}</span>`; vEl.classList.add("hidden"); return; }
+    $("evambstate").textContent = `평소 움직임 완료 · ${v.finished || ""} · ${v.seconds}초 — 'Quest 뷰어에 추가'를 누르면 평소 → 사건 → 평소 반복 영상으로 넣어요.`;
+    const main = v.audio_url || v.silent_url;
+    if (main && !vEl.src.includes(main.split("?")[0])) vEl.src = main;
+    vEl.classList.remove("hidden");
+  }
+  async function ambPoll() {
+    if (!runId) return;
+    try { ambShow(await api(`/api/run/${runId}/attempt/${n}/event/video?kind=ambient`)); }
+    catch (e) { $("evambstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; aTimer = setTimeout(ambPoll, 8000); }
+  }
+  $("evamb").onclick = async () => {
+    $("evamb").disabled = true; $("evambstate").textContent = "범위·이미지를 올리고 작업을 보내는 중…";
+    try {
+      if (maskDirty) await saveMask();
+      ambShow(await post(`/api/run/${runId}/attempt/${n}/event/video`, {
+        kind: "ambient", backend: $("evbackend").value, seconds: +$("evsec").value, negative: $("eltxneg").value}));
+    } catch (e) { $("evambstate").innerHTML = `<span class="err">${esc(e.message)}</span>`; $("evamb").disabled = false; }
+  };
+
   $("evgo").onclick = async () => {
     $("evgo").disabled = true; $("evstate").textContent = "범위·이미지를 올리고 작업을 보내는 중…";
     try {
@@ -190,12 +224,13 @@ export function setupEvent() {
       if (v && v.seconds) $("evsec").value = String(v.seconds);
       if (v && v.lora_strength != null) $("evlora").value = v.lora_strength;
       vidShow(v);
+      ambShow(ev && ev.ambient);
       $("eventcard").classList.remove("hidden");
       $("etarget").textContent = `#${att.n} 결과로 만들어요`;
       if (ev && ev.seconds) $("esec").value = String(Math.round(ev.seconds));
       $("estate").textContent = ev ? "저장된 사건을 불러왔어요." : "";
       render();
     },
-    hide() { $("eventcard").classList.add("hidden"); ev = null; runId = null; clearTimeout(vTimer); },
+    hide() { $("eventcard").classList.add("hidden"); ev = null; runId = null; clearTimeout(vTimer); clearTimeout(aTimer); },
   };
 }

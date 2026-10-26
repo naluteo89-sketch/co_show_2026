@@ -15,6 +15,7 @@ namespace Pano360
         public bool video;  // 360 영상 (mp4 등) — VideoPlayer 로 재생
         public string eventUrl; // 사건 영상: 이 사진을 보다가 재생 → 끝나면 다시 사진 (이름_event.mp4)
         public string eventMaskUrl; // 사건 영상 범위: 흰색만 영상, 나머지는 사진 그대로 (이름_event_mask.png)
+        public bool eventLoops;     // 이름_live.mp4: 평소 움직임 → 사건 → 평소 가 이어진 끊김 없는 반복 영상 (사진 위에 계속 재생)
         public bool HasEvent => !string.IsNullOrEmpty(eventUrl);
     }
 
@@ -119,6 +120,7 @@ namespace Pano360
         }
 
         public const string EventSuffix = "_event";
+        public const string LiveSuffix = "_live";
         public const string EventMaskSuffix = "_event_mask";
 
         /// "XXX_event.mp4" 를 이름이 XXX 로 시작하는 사진에 붙임 (사진 → 사건 영상 → 사진). 짝이 없으면 일반 영상으로 둠.
@@ -136,21 +138,31 @@ namespace Pano360
                 masks[stem.Substring(0, stem.Length - EventMaskSuffix.Length)] = m.url;
                 list.RemoveAt(i);
             }
-            for (int i = list.Count - 1; i >= 0; i--)
+            // 2) XXX_live.mp4 (끊김 없는 반복) 먼저, 그다음 XXX_event.mp4. 같은 사진에 둘 다 있으면 live 만 씀
+            foreach (var (suffix, loops) in new[] { (LiveSuffix, true), (EventSuffix, false) })
             {
-                var v = list[i];
-                if (!v.video) continue;
-                var stem = Path.GetFileNameWithoutExtension(v.name);
-                if (!stem.EndsWith(EventSuffix, StringComparison.OrdinalIgnoreCase)) continue;
-                var baseName = stem.Substring(0, stem.Length - EventSuffix.Length);
-                int img = list.FindIndex(p => !p.video && !p.HasEvent &&
-                                              Path.GetFileNameWithoutExtension(p.name).StartsWith(baseName, StringComparison.OrdinalIgnoreCase));
-                if (img < 0) continue;
-                var e = list[img];
-                e.eventUrl = v.url;
-                if (masks.TryGetValue(baseName, out var mu)) e.eventMaskUrl = mu;
-                list[img] = e;
-                list.RemoveAt(i);
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    var v = list[i];
+                    if (!v.video) continue;
+                    var stem = Path.GetFileNameWithoutExtension(v.name);
+                    if (!stem.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
+                    var baseName = stem.Substring(0, stem.Length - suffix.Length);
+                    bool Match(PhotoEntry p) => !p.video &&
+                        Path.GetFileNameWithoutExtension(p.name).StartsWith(baseName, StringComparison.OrdinalIgnoreCase);
+                    int img = list.FindIndex(p => Match(p) && !p.HasEvent);
+                    if (img < 0)
+                    {
+                        if (list.FindIndex(p => Match(p) && p.eventLoops) >= 0) list.RemoveAt(i);   // live 가 이미 있음 → 사건만 영상은 뺌
+                        continue;
+                    }
+                    var e = list[img];
+                    e.eventUrl = v.url;
+                    e.eventLoops = loops;
+                    if (masks.TryGetValue(baseName, out var mu)) e.eventMaskUrl = mu;
+                    list[img] = e;
+                    list.RemoveAt(i);
+                }
             }
         }
 

@@ -1,0 +1,32 @@
+<section class="card">
+  <h2><span class="step">1</span>사진 올리기</h2>
+  <div id="drop">사진을 끌어다 놓거나 클릭해서 선택<input id="file" type="file" accept="image/*" hidden></div>
+  <span id="upstate" class="reqstate"></span>
+  <div class="src hidden" id="srcbox">
+    <img id="srcimg" alt="">
+    <div style="flex:1">
+      <div id="srcinfo" class="muted"></div>
+      <div id="erpbox" class="note hidden">
+        <b>이미 360(2:1) 이미지예요.</b>
+        <div class="row" style="margin-top:8px;align-items:center">
+          <div style="flex:0 0 auto"><button class="primary" id="importbtn">생성 없이 이 이미지로 바로 다음 단계</button></div>
+          <div style="flex:1 1 240px;font-size:12px" class="muted" id="importstate">ComfyUI 없이 바로 5·6단계(움직일 곳·프롬프트·범위 칠하기·영상)로 가요. 이미 화질을 올린 360 이면 이걸 쓰세요.</div>
+        </div>
+        <div style="margin-top:10px">또는 <b>Quest 3용 8K 화질 개선</b>만 (이음새 패딩 → AI 업스케일 → 블렌드 → 디더, ComfyUI 필요):</div>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <div style="flex:0 0 240px"><select id="backend2"></select></div>
+          <div style="flex:0 0 auto"><button class="primary" id="enhance">8K 화질 개선 실행</button></div>
+          <div style="flex:0 0 auto"><button id="polebtn2" title="발밑·하늘 꼭대기를 다시 그린 뒤 8K 화질 개선">발밑·하늘 보정 + 8K</button></div>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:6px">일반 사진처럼 다시 360으로 만들고 싶으면 아래 분석을 그대로 써도 돼요(권장하지 않음).</div>
+      </div>
+      <label style="margin-top:10px">작업자 메모 (선택 · 장소명, 강조할 요소, 피할 것 등)</label>
+      <input id="note" placeholder="예: 순천 승선교, 계곡 물소리 느낌. 사람은 넣지 말 것">
+      <div class="row" style="margin-top:10px;align-items:center">
+        <div style="flex:0 0 220px"><select id="model" title="분석 모델"></select></div>
+        <div style="flex:0 0 auto"><button class="primary" id="analyze">LLM으로 프롬프트 분석</button></div>
+      </div>
+      <span id="anstate" class="muted" style="margin-left:8px"></span>
+    </div>
+  </div>
+</section>

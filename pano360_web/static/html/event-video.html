@@ -1,0 +1,27 @@
+<div class="mrender" id="evid">
+  <b>영상 만들기 — 노드 파일로</b>
+  <div class="muted" style="font-size:12px;margin-top:4px">화질 올린 이 360 + 위에서 칠한 범위 + 위 프롬프트를 노드 파일
+    (<code>video_nodes/retest.json</code>, config <code>video_template</code>)에 <b>값만 넣어</b> 그대로 실행해요.
+    노드가 사각 마스크(SolidMask·MaskComposite)면 칠한 범위를 감싸는 좌표를, 마스크 그림(LoadImage)이면 그림을 넣어요.
+    값 넣은 노드 파일도 받을 수 있어요(ComfyUI 에서 그대로 열림). 보통 5~15분.</div>
+  <div class="row" style="margin-top:10px;align-items:flex-end">
+    <div style="flex:0 0 220px"><label>실행 위치</label><select id="evbackend"></select></div>
+    <div style="flex:0 0 100px"><label>길이</label><select id="evsec"><option value="3">3초</option><option value="4" selected>4초</option><option value="5">5초</option><option value="6">6초</option><option value="8">8초</option><option value="10">10초</option><option value="12">12초</option><option value="14">14초</option></select></div>
+    <div style="flex:0 0 120px"><label>360 LoRA 세기</label><input id="evlora" type="number" min="0" max="1.2" step="0.1" value="0.6"></div>
+    <div style="flex:0 0 auto"><button class="primary" id="evgo">영상 만들기</button></div>
+    <div style="flex:1 1 200px" id="evstate" class="muted"></div>
+  </div>
+  <div class="row" style="margin-top:8px;align-items:center">
+    <div style="flex:0 0 auto"><button id="evamb">평소 움직임 만들기 (반복용)</button></div>
+    <div style="flex:1 1 200px" id="evambstate" class="muted">같은 범위에서 사건 없이 평소 흐름만 (예: 계곡물이 계속 흐름). 있으면 Quest 에서 사진이 멈춰 있지 않고 평소 움직임 → 사건 → 평소 로 끊김 없이 반복돼요.</div>
+  </div>
+  <video id="evambvideo" controls loop playsinline class="mvideo hidden" style="margin-top:8px"></video>
+  <div id="evout" class="hidden" style="margin-top:10px">
+    <video id="evvideo" controls loop playsinline class="mvideo"></video>
+    <div class="row" style="margin-top:8px;align-items:center">
+      <a id="evdl" download style="flex:0 0 auto"><button class="primary">영상 받기 (물소리 포함)</button></a>
+      <a id="evdl2" download style="flex:0 0 auto"><button>무음 영상 받기</button></a>
+      <div id="evinfo" class="muted" style="flex:1 1 200px;font-size:12px"></div>
+    </div>
+  </div>
+</div>
