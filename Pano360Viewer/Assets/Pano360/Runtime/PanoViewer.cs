@@ -298,7 +298,7 @@ namespace Pano360
                     string warn = Mathf.Abs(ratio - want) > 0.03f
                         ? $"\n\nWARNING: {tex.width}x{tex.height} is not {(p.stereo ? "1:1" : "2:1")} - image will look stretched"
                         : "";
-                    label.Show($"{i + 1} / {photos.Count}{(p.HasEvent ? (string.IsNullOrEmpty(p.eventMaskUrl) ? "  [EVENT]" : "  [EVENT+MASK]") : "")}\n{p.name}{(p.stereo ? "  [3D]" : "")}\n{tex.width}x{tex.height}{warn}",
+                    label.Show($"{i + 1} / {photos.Count}{(p.HasEvent ? (p.eventLoops ? "  [LIVE]" : string.IsNullOrEmpty(p.eventMaskUrl) ? "  [EVENT]" : "  [EVENT+MASK]") : "")}\n{p.name}{(p.stereo ? "  [3D]" : "")}\n{tex.width}x{tex.height}{warn}",
                                warn.Length > 0 ? labelDuration * 2f : labelDuration);
                 }
                 else
@@ -329,9 +329,10 @@ namespace Pano360
             float wait = eventDelay;
             while (true)
             {
-                // 기다리는 동안 미리 준비 (시작할 때 끊김 없도록)
+                // 기다리는 동안 미리 준비 (시작할 때 끊김 없도록). live 는 평소 움직임부터 시작하므로 바로
+                if (p.eventLoops) wait = Mathf.Min(wait, 0.5f);
                 videoPlayer.url = p.eventUrl;
-                videoPlayer.isLooping = false;
+                videoPlayer.isLooping = p.eventLoops;
                 videoPlayer.Prepare();
                 float t0 = Time.realtimeSinceStartup;
                 yield return new WaitForSeconds(wait);
@@ -362,6 +363,14 @@ namespace Pano360
                 float tw = Time.realtimeSinceStartup;
                 while (videoPlayer.frame < 1 && Time.realtimeSinceStartup - tw < 3f) yield return null;
                 yield return BlendTo(1f);
+
+                if (p.eventLoops)
+                {
+                    // XXX_live.mp4: 평소 움직임 → 사건 → 평소 가 끝↔처음까지 이어진 영상 → 사진으로 돌아가지 않고 계속 반복
+                    videoPlayer.isLooping = true;
+                    eventCo = null;
+                    yield break;
+                }
 
                 double len = videoPlayer.length;
                 if (eventEndOnVideo)

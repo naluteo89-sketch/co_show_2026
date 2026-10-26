@@ -1,0 +1,14 @@
+<section class="card hidden" id="anacard">
+  <h2><span class="step">2</span>분석 결과 · 배치</h2>
+  <div class="note" id="summary"></div>
+  <div class="note warn" id="tips"></div>
+  <div class="row" style="margin-top:14px">
+    <div><label>yaw (° · +오른쪽)</label><input type="number" id="yaw" step="1"></div>
+    <div><label>pitch (° · +위)</label><input type="number" id="pitch" step="0.5"></div>
+    <div><label>가로 화각 hFOV (°) <span id="hfovsrc"></span></label><input type="number" id="hfov" step="1" min="10" max="170"></div>
+    <div><label>세로 화각 vFOV (비우면 자동)</label><input type="number" id="vfov" step="1"></div>
+  </div>
+  <div class="ctrl"><img id="ctrlimg" alt=""></div>
+  <div id="ctrlstate" class="muted"></div>
+  <div class="muted" style="font-size:12px;margin-top:6px">초록 부분을 AI가 채워요. 사진이 너무 크거나 작게 붙으면 hFOV를, 수평선이 기울어 보이면 pitch를 조정하세요.</div>
+</section>

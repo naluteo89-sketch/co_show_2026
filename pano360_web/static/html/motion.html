@@ -1,0 +1,48 @@
+<section class="card hidden" id="motioncard">
+  <h2><span class="step">5</span>움직일 곳(마스크) · 영상 프롬프트 
+    <span class="target"><label for="mtargetsel">대상 결과</label><select id="mtargetsel" class="targetsel" data-target-select></select></span></h2>
+  <div class="note">LLM 이 결과 360 과 생성 프롬프트를 보고 물·구름·나뭇잎처럼 움직이면 살아나는 곳을 고르고,
+    영역(마스크)과 영상 모델(LTX 등)용 프롬프트를 만들어요. 영상 생성은 ComfyUI 에서 해요.</div>
+  <label style="margin-top:10px">작업자 메모 (선택 · 움직이고 싶은 것, 피할 것)</label>
+  <input id="mnote" placeholder="예: 연못 물결과 버드나무만. 구름은 움직이지 말 것">
+  <div class="row" style="margin-top:10px;align-items:center">
+    <div style="flex:0 0 220px"><select id="mmodel" title="분석 모델"></select></div>
+    <div style="flex:0 0 auto"><button class="primary" id="mplan">움직일 곳 찾기 (LLM)</button></div>
+    <div style="flex:1 1 200px" id="mstate" class="muted"></div>
+  </div>
+  <div id="mbody" class="hidden">
+    <div class="note" id="msummary"></div>
+    <div class="mltx">
+      <div class="row" style="align-items:center">
+        <div style="flex:1 1 300px"><b>영상 프롬프트 · 360 전체</b>
+          <span class="muted" style="font-size:12px">— 360 이미지를 그대로 이미지→영상 모델에 넣을 때. 원본은 거의 그대로, 물·폭포처럼 고른 것만 잔잔하게.</span></div>
+        <div style="flex:0 0 260px"><select id="mltxfor" title="쓸 모델">
+          <option value="wan">Wan 2.2 (TI2V 5B · 가벼움)</option>
+          <option value="ltx">LTX-2.3 + Cinemagraph LoRA (트리거 포함)</option></select></div>
+      </div>
+      <label style="margin-top:8px">Positive</label>
+      <textarea id="mltxpos" style="min-height:120px"></textarea>
+      <label style="margin-top:8px">Negative</label>
+      <textarea id="mltxneg" style="min-height:70px"></textarea>
+      <div class="row" style="margin-top:8px;align-items:center">
+        <div style="flex:0 0 auto"><button class="primary" id="mltxcp">Positive 복사</button></div>
+        <div style="flex:0 0 auto"><button id="mltxcn">Negative 복사</button></div>
+        <div class="muted" id="mltxnote" style="flex:1 1 200px;font-size:12px"></div>
+      </div>
+    </div>
+    <div class="mpick" id="mpick">
+      <img id="moverlay" alt="움직일 영역 미리보기 (밝은 곳만 움직임)" class="moverlay" draggable="false">
+      <div id="mdrag" class="mdrag hidden"></div>
+    </div>
+    <div class="muted" style="font-size:12px">LLM 이 고른 움직일 곳이에요(프롬프트에 들어가요). 영역별 화면·프롬프트는 잘라서 LTX 에 넣을 때 써요.
+      <b>마우스로 끌어서</b> 새 영역을 고를 수 있어요 <span id="mpickmode"></span></div>
+    <div id="mregions"></div>
+    <div class="row" style="margin-top:12px;align-items:center">
+      <div style="flex:0 0 auto"><button id="madd">영역 추가</button></div>
+      <div style="flex:0 0 auto"><button class="primary" id="msave">수정 반영</button></div>
+      <div style="flex:0 0 auto"><button id="mcopy">프롬프트 JSON 복사</button></div>
+      <div class="muted" id="mmeta" style="flex:1 1 200px;font-size:12px"></div>
+    </div>
+
+  </div>
+</section>

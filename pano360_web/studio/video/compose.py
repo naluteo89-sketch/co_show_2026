@@ -92,3 +92,140 @@ def compose_crop_video(crop_mp4: str, still_path: str, mask_path: str, crop: dic
     if n == 0:
         raise RuntimeError("크롭 영상에서 프레임을 못 읽었어요")
     return {"frames": n, "size": [W, H], "crop_size": [gw, gh], "shift": shift}
+
+
+# ----------------------------------------------------------------------------- 평소 움직임 + 사건 = 끊김 없는 반복 영상
+def _smooth(w: float) -> float:
+    return w * w * (3 - 2 * w)
+
+
+def _decode(path: str, size, exe: str):
+    """영상 → RGB 프레임(uint8) 을 하나씩 (메모리에 다 올리지 않음)."""
+    w, h = size
+    p = subprocess.Popen([exe, "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    try:
+        n = w * h * 3
+        while True:
+            buf = p.stdout.read(n)
+            if len(buf) < n:
+                break
+            yield np.frombuffer(buf, np.uint8).reshape(h, w, 3)
+    finally:
+        if p.poll() is None:
+            p.kill()
+
+
+def _mix(a, b, w):
+    return np.clip(a.astype(np.float32) * (1 - w) + b.astype(np.float32) * w + 0.5, 0, 255).astype(np.uint8)
+
+
+def live_plan(n_amb: int, n_evt: int, fps: int = 24, calm_seconds: float = 8.0, fade: int = 12) -> dict:
+    """반복 영상 순서 계산 (프레임 수).
+    평소 움직임 A(n_amb) 를 끝↔처음 교차 페이드로 끊김 없는 반복 Lp(L = n_amb - fade) 로 만들고,
+    Lp 를 reps 번 이어 붙인 뒤 사건 E 로 교차 페이드, E 끝은 다시 Lp 처음으로 교차 페이드 → 파일 끝 = 파일 처음.
+    파일은 Lp[fade] 에서 시작 (E→Lp 교차 페이드의 다음 프레임)."""
+    fade = int(max(2, min(fade, n_amb // 4, n_evt // 4)))
+    L = n_amb - fade
+    if L <= 2 * fade:
+        raise ValueError("평소 움직임 영상이 너무 짧아요")
+    reps = max(1, -(-int(round(calm_seconds * fps + 2 * fade)) // L))     # 평소 구간이 calm_seconds 이상
+    calm = reps * L - 2 * fade            # 사건이 섞여 들어오기 시작하는 프레임 (그 앞은 평소 움직임만)
+    total = calm + n_evt
+    return {"fade": fade, "loop_len": L, "reps": reps, "event_start": calm, "total": total,
+            "calm_frames": calm, "fps": fps}
+
+
+def build_live(amb_mp4: str, evt_mp4: str, out_mp4: str, *, fps: int = 24, calm_seconds: float = 8.0,
+               fade: int = 12, crf: int = 12, audio: bool = True, duck: float = 0.35) -> dict:
+    """크롭 공간에서: [평소 움직임 반복 × reps] → 사건 → 다시 평소 (끝 = 처음, 무한 반복해도 이음매 없음).
+    소리: 평소 소리를 반복으로 깔고, 사건 소리를 사건 위치에 겹침 (사건 동안 평소 소리는 duck 배로 줄임)."""
+    exe = ffmpeg_exe()
+    size = video_size(amb_mp4, exe)
+    if video_size(evt_mp4, exe) != size:
+        raise ValueError("평소 움직임과 사건 영상의 크기가 달라요 (범위를 바꿨다면 둘 다 다시 만들어 주세요)")
+    from collections import deque
+    k0 = int(max(2, fade))
+    head, tail, n_amb = [], deque(maxlen=k0), 0
+    for f in _decode(amb_mp4, size, exe):                  # 실제 프레임 수 + 처음·끝 k 프레임
+        if n_amb < k0:
+            head.append(f.copy())
+        tail.append(f.copy())
+        n_amb += 1
+    n_evt = sum(1 for _ in _decode(evt_mp4, size, exe))
+    plan = live_plan(n_amb, n_evt, fps, calm_seconds, fade)
+    k, L, reps = plan["fade"], plan["loop_len"], plan["reps"]
+    tail = list(tail)[-k:]
+    head = head[:k]
+
+    def loop_frames(start: int, stop: int):
+        """Lp[start:stop] — 처음 k 프레임은 A 끝과 교차 페이드 (반복 이음매)."""
+        if start >= stop:
+            return
+        for i, f in enumerate(_decode(amb_mp4, size, exe)):
+            if i >= stop:
+                break
+            if i < start:
+                continue
+            yield _mix(tail[i], f, _smooth((i + 1) / (k + 1))) if i < k else f
+
+    cmd = [exe, "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{size[0]}x{size[1]}", "-r", str(fps),
+           "-i", "-", "-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p", out_mp4 + ".v.mp4"]
+    enc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    n = 0
+    try:
+        def put(f):
+            nonlocal n
+            enc.stdin.write(np.ascontiguousarray(f).tobytes())
+            n += 1
+        segs = [(k, L)] + [(0, L)] * (reps - 1)            # 첫 반복은 Lp[k] 부터 (파일 처음 = 사건 끝 교차 페이드 다음)
+        last_s, _ = segs[-1]
+        for s, e in segs[:-1]:
+            for f in loop_frames(s, e):
+                put(f)
+        lp_end = list(range(L - k, L))                      # 마지막 반복의 끝 k 프레임은 사건 처음과 섞음
+        amb_last = {}
+        for i, f in enumerate(loop_frames(last_s, L)):
+            idx = last_s + i
+            if idx < L - k:
+                put(f)
+            else:
+                amb_last[idx] = f.copy()
+        evt_tail = deque()
+        for j, f in enumerate(_decode(evt_mp4, size, exe)):
+            if j < k:
+                put(_mix(amb_last[lp_end[j]], f, _smooth((j + 1) / (k + 1))))
+                continue
+            evt_tail.append(f.copy())
+            if len(evt_tail) > k:
+                put(evt_tail.popleft())
+        evt_tail = list(evt_tail)
+        for j, f in enumerate(evt_tail):                     # 사건 끝 → Lp 처음 (= 파일 처음 바로 앞)
+            put(_mix(f, _mix(tail[j], head[j], _smooth((j + 1) / (k + 1))), _smooth((j + 1) / (k + 1))))
+        enc.stdin.close()
+        err = enc.stderr.read().decode("utf-8", "replace")
+        if enc.wait() != 0:
+            raise RuntimeError(f"ffmpeg 실패: {err[-600:]}")
+    finally:
+        if enc.poll() is None:
+            enc.kill()
+    dur = n / fps
+    t_evt = plan["event_start"] / fps
+    d_evt = n_evt / fps
+    import os
+    if audio:
+        flt = (f"[1:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+               f"volume='if(between(t,{t_evt:.3f},{t_evt + d_evt:.3f}),{duck},1)':eval=frame[a0];"
+               f"[2:a]adelay={int(t_evt * 1000)}|{int(t_evt * 1000)},apad[a1];"
+               f"[a0][a1]amix=inputs=2:duration=first:normalize=0[a]")
+        r = subprocess.run([exe, "-y", "-v", "error", "-i", out_mp4 + ".v.mp4", "-stream_loop", "-1", "-i", amb_mp4,
+                            "-i", evt_mp4, "-filter_complex", flt, "-map", "0:v", "-map", "[a]", "-c:v", "copy",
+                            "-c:a", "aac", "-b:a", "192k", "-t", f"{dur:.3f}", out_mp4],
+                            capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:                                 # 소리가 없는 영상이면 영상만
+            os.replace(out_mp4 + ".v.mp4", out_mp4)
+        else:
+            os.remove(out_mp4 + ".v.mp4")
+    else:
+        os.replace(out_mp4 + ".v.mp4", out_mp4)
+    plan.update(frames=n, seconds=round(dur, 2), event_at=round(t_evt, 2))
+    return plan

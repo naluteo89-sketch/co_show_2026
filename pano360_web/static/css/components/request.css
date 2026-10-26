@@ -1,0 +1,8 @@
+/* 요청 버튼 옆 상태 표시 (보내는 중 / 보냄 / 실패) */
+.reqstate{display:inline-block;margin-left:8px;font-size:12px;color:var(--muted);vertical-align:middle}
+.reqstate:empty{display:none}
+.reqstate.sending{color:var(--acc)}
+.reqstate.ok{color:var(--ok)}
+.reqstate.fail{color:var(--err)}
+.reqstate.wait{color:var(--warn)}
+#upstate{display:block;margin:8px 0 0}
