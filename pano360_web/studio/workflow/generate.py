@@ -13,7 +13,9 @@ SEAM_TRIGGER = ("Fill the green spaces according to the image. This is a 360 equ
 
 def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
           seed1=None, seed2=None, prefix="VR360/studio", settings: dict | None = None,
-          keep_mask: str | None = None) -> tuple[dict, dict]:
+          keep_mask: str | None = None, protect_refine: bool = False) -> tuple[dict, dict]:
+    """keep_mask: 사진 영역 마스크 파일(흰=생성). 회색이면 그만큼만 덜 바뀜(부드러운 유지).
+    protect_refine: 8K 리파인에서도 사진 영역은 같은 마스크만큼 리파인 전(업스케일) 결과를 유지."""
     api = ui_to_api(copy.deepcopy(template_ui))
 
     def set_(key, field, value):
@@ -67,11 +69,35 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
     # (특히 4스텝 distilled 모델) 1차 결과의 가운데 좁은 띠만 약하게 다시 그려 양쪽을 이어 줌
     seam_second_pass(api, ids, s2)
 
+    # 이음새 합성 마스크를 '띠 바깥쪽'으로 페더: 띠 안쪽 페더는 새로 그린 띠와 그 아래 원래 그림(전혀 다른 내용)을
+    # 반투명하게 겹쳐 양쪽 끝에 '의문의 흐림·유령 난간'을 만듦. 띠 바깥은 새로 그린 결과가 원본과 같으므로(latent 유지) 거기서 섞음.
+    outward_seam_feather(api)
+
+    # 이음새 latent 노이즈 마스크(82·914)를 띠 바깥쪽으로 부드럽게: 딱 끊긴 마스크는 다시 그린 띠와 원래 latent 사이에
+    # 계단을 남겨, 바깥 페더 뒤 8K 에서 띠 경계(±1024px)에 날카로운 세로 경계로 보임.
+    # 2차 패스엔 초록이 없으므로 "Fill the green…" 문장을 뺀 프롬프트를 따로 줌.
+    soft_seam_noise_mask(api, float(st.get("seam_noise_feather", 0.25)))
+    seam_second_prompt(api, ids)
+
     # 디테일 리파인 (LoRA 없이) — 업스케일 블러/뭉개짐 대신 실제 질감
     rf = st.get("refine")
     if rf and rf.get("enabled", True):
-        attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts)
+        if attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts) and keep_mask and protect_refine:
+            protect_photo_in_refine(api)
     return api, {"seed1": s1, "seed2": s2}
+
+
+def protect_photo_in_refine(api: dict, mask_node="950", pre_node="117", noise_node="119") -> bool:
+    """리파인 결과 위에 리파인 전 8K(업스케일만 한 것)를 사진 영역에만 섞어 글씨·형태가 리파인에서 다시 바뀌지 않게.
+    섞는 양 = 생성 마스크를 뒤집은 값 (사진 영역 = 유지 세기, 생성 영역 = 0). 마스크는 2K 라 합성 때 8K 로 늘어남."""
+    if not all(k in api for k in (mask_node, pre_node, noise_node)):
+        return False
+    refined = api[noise_node]["inputs"]["image"]
+    api["960"] = node("InvertMask", {"mask": [mask_node, 0]}, "사진 영역 유지 세기 (리파인 보호)")
+    api["961"] = node("ImageCompositeMasked", {"destination": refined, "source": [pre_node, 0], "mask": ["960", 0],
+                                               "x": 0, "y": 0, "resize_source": False}, "리파인 · 사진 영역은 리파인 전 유지")
+    api[noise_node]["inputs"]["image"] = ["961", 0]
+    return True
 
 
 def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
@@ -142,6 +168,78 @@ def seam_second_pass(api: dict, ids: dict, seed: int, band=192, feather=64, deno
     for k in ("105", "106"):
         api[k]["inputs"]["image"] = ["920", 0]
     api["107"]["inputs"]["destination"] = ["920", 0]
+    return True
+
+
+def outward_seam_feather(api: dict) -> bool:
+    """이음새 1차(101~104) · 2차(912/918/919) 합성 마스크: 띠 안은 100% 새 그림, 페더는 띠 바깥쪽에만."""
+    ok = False
+    if all(k in api for k in ("101", "102", "103", "104")):
+        bw = int(api["101"]["inputs"].get("width", 512))
+        bh = int(api["101"]["inputs"].get("height", 1024))
+        bx = int(api["102"]["inputs"].get("x", 768))
+        f = int(api["103"]["inputs"].get("left", 128))
+        api["930"] = node("SolidMask", {"value": 1.0, "width": bw + 2 * f, "height": bh}, "이음새 합성 띠 (바깥 페더 포함)")
+        api["103"]["inputs"].update(mask=["930", 0], left=f, right=f)
+        api["104"]["inputs"]["x"] = bx - f
+        ok = True
+    if all(k in api for k in ("912", "918", "919")):
+        bw = int(api["912"]["inputs"].get("width", 192))
+        bh = int(api["912"]["inputs"].get("height", 1024))
+        f = int(api["918"]["inputs"].get("left", 64))
+        x = int(api["919"]["inputs"].get("x", 0))
+        api["931"] = node("SolidMask", {"value": 1.0, "width": bw + 2 * f, "height": bh}, "이음새 2차 합성 띠 (바깥 페더 포함)")
+        api["918"]["inputs"].update(mask=["931", 0], left=f, right=f)
+        api["919"]["inputs"]["x"] = x - f
+        ok = True
+    return ok
+
+
+def soft_seam_noise_mask(api: dict, ratio: float = 0.25) -> bool:
+    """이음새 1차(82 ← 102) · 2차(914 ← 913) latent 노이즈 마스크: 띠 안은 1 그대로(초록이 남지 않게),
+    띠 바깥 e px 에서 1→0 으로 부드럽게. e = 합성 페더(103 · 918) × ratio (기본 1/4 → 2K 에서 32px · 16px). 0 이면 예전대로."""
+    if ratio <= 0:
+        return False
+    ok = False
+    for noise, band, place, feather, base in (("82", "101", "102", "103", 932), ("914", "912", "913", "918", 935)):
+        if not all(k in api for k in (noise, band, place, feather, "100")):
+            continue
+        bw = int(api[band]["inputs"].get("width", 512))
+        bh = int(api[band]["inputs"].get("height", 1024))
+        bx = int(api[place]["inputs"].get("x", 0))
+        e = max(1, int(round(int(api[feather]["inputs"].get("left", 64)) * ratio)))
+        e = min(e, bx)                                              # 캔버스 밖으로 나가지 않게
+        a, b, c = str(base), str(base + 1), str(base + 2)
+        api[a] = node("SolidMask", {"value": 1.0, "width": bw + 2 * e, "height": bh}, "이음새 노이즈 띠 (바깥 여유 포함)")
+        api[b] = node("FeatherMask", {"mask": [a, 0], "left": e, "top": 0, "right": e, "bottom": 0},
+                      "이음새 노이즈 · 띠 바깥만 부드럽게")
+        api[c] = node("MaskComposite", {"destination": ["100", 0], "source": [b, 0], "x": bx - e, "y": 0, "operation": "add"},
+                      "이음새 노이즈 마스크 (부드러운 경계)")
+        api[noise]["inputs"]["mask"] = [c, 0]
+        ok = True
+    return ok
+
+
+def strip_green_trigger(text: str) -> str:
+    """초록 띠 채우기 문장(SEAM_TRIGGER · "Fill the green spaces according to the image.") 을 앞에서 뺌."""
+    t = text.strip()
+    if t.startswith(SEAM_TRIGGER):
+        t = t[len(SEAM_TRIGGER):].strip()
+    head = "Fill the green spaces according to the image."
+    if t.startswith(head):
+        t = t[len(head):].strip()
+    return t or text
+
+
+def seam_second_prompt(api: dict, ids: dict) -> bool:
+    """이음새 2차(915 참조)에 초록 채우기 문장을 뺀 이음새 프롬프트를 따로 인코드해 줌 (2차 입력엔 초록이 없음)."""
+    seam_pos = str(ids.get("seam_positive"))
+    if "915" not in api or seam_pos not in api:
+        return False
+    inp = api[seam_pos]["inputs"]
+    api["938"] = node("CLIPTextEncode", {"text": strip_green_trigger(inp.get("text", "")), "clip": inp["clip"]},
+                      "이음새 2차 · 프롬프트 (초록 채우기 문장 뺌)")
+    api["915"]["inputs"]["conditioning"] = ["938", 0]
     return True
 
 

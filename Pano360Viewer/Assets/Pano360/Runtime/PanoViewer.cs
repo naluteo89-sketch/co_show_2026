@@ -25,6 +25,8 @@ namespace Pano360
         public bool startAtHome = true;
         [Tooltip("보는 중 아래쪽에 HOME(취소) 버튼 표시")]
         public bool showHomeButton = true;
+        [Tooltip("홈 화면 아래쪽에 EXIT(앱 끄기) 버튼 표시. 사진을 보는 중에는 숨김 (관람 중 실수로 꺼지지 않게)")]
+        public bool showExitButton = true;
         [Tooltip("눈 렌더 해상도 배율. Quest 3 기본(1.0)=1680x1760/눈 으로 패널(2064x2208)의 약 80%. 1.25 ≈ 패널과 1:1")]
         [Range(1f, 1.5f)] public float eyeResolutionScale = 1.25f;
         [Tooltip("360 영상 반복 재생")]
@@ -59,6 +61,7 @@ namespace Pano360
         PanoLabel label;
         PanoInput input;
         PanoHomeButton homeButton;
+        PanoHomeButton exitButton;
 
         enum Mode { Home, Viewing }
         Mode mode = Mode.Home;
@@ -143,6 +146,10 @@ namespace Pano360
             homeButton = PanoHomeButton.Create(head);
             homeButton.onActivate = () => RequestHome();
 
+            // EXIT(앱 끄기) 버튼 — 홈 화면에서만
+            exitButton = PanoHomeButton.Create(head, "EXIT");
+            exitButton.onActivate = () => QuitApp();
+
             // 360 영상 재생기 (사진을 볼 때는 멈춰 있음)
             videoPlayer = gameObject.AddComponent<VideoPlayer>();
             videoPlayer.playOnAwake = false;
@@ -154,6 +161,8 @@ namespace Pano360
             videoPlayer.errorReceived += (vp, msg) => Debug.LogError($"[Pano360] 영상 오류 {vp.url}: {msg}");
             input.pointerOverHome = node => homeButton.IsHoveredBy(node);
             input.gazeOverHome = () => homeButton.GazeHover;
+            input.pointerOverQuit = node => exitButton.IsHoveredBy(node);
+            input.gazeOverQuit = () => exitButton.GazeHover;
         }
 
         IEnumerator Start()
@@ -182,12 +191,26 @@ namespace Pano360
             mode = Mode.Home;
             homeRequested = false;
             homeButton.SetVisible(false);
+            exitButton.SetVisible(showExitButton);
             label.follow = true;
             label.Show(
                 "PANO360\n\n" +
                 $"{photos.Count} items ({photos.FindAll(x => x.video).Count} videos)\n\n" +
-                "Trigger / A : Start",
+                "Trigger / A : Start" +
+                (showExitButton ? "\nEXIT (below) : Quit app" : ""),
                 float.PositiveInfinity);
+        }
+
+        /// 앱 끄기 (Quest: 앱 종료, 에디터: 플레이 모드 끝)
+        public void QuitApp()
+        {
+            StopEvent();
+            StopVideo();
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
         }
 
         /// 보는 중 취소 → 홈. 사진을 불러오는 중이면 끝난 뒤 이동
@@ -215,6 +238,7 @@ namespace Pano360
         IEnumerator StartViewing()
         {
             mode = Mode.Viewing;
+            exitButton.SetVisible(false);
             label.follow = false;
             label.Hide();
             Recenter();                     // 첫 사진 정면을 지금 보는 방향으로
@@ -224,6 +248,12 @@ namespace Pano360
         void Update()
         {
             var action = input.Consume();
+
+            if (action == PanoAction.Quit)
+            {
+                if (mode == Mode.Home) QuitApp();   // 보는 중에는 EXIT 버튼이 없음 (키보드 Q 도 홈 화면에서만)
+                return;
+            }
 
             if (mode == Mode.Home)
             {

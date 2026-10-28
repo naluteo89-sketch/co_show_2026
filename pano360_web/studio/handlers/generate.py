@@ -73,9 +73,9 @@ class GenerateMixin:
         img.save(path, optimize=False)
         return path
 
-    def _keep_mask(self, run_id, pl, name, feather):
+    def _keep_mask(self, run_id, pl, name, feather, strength=1.0):
         W, H = self.cfg.get("erp_size", [2048, 1024])
-        m = erp.keep_mask(self.source(run_id).size, *placement_args(pl), W, H, feather)
+        m = erp.keep_mask(self.source(run_id).size, *placement_args(pl), W, H, feather, strength)
         path = self.store.path(run_id, name)
         m.save(path)
         return path
@@ -141,16 +141,25 @@ class GenerateMixin:
                 ctrl_path = await asyncio.to_thread(self._control, run_id, p["placement"], f"{d}/control.png")
                 name = await self._upload_file(backend, ctrl_path, f"{tag}_erp_control.png")
                 kp = self.cfg.get("keep_photo", {})
+                keep = self._photo_keep(p)
                 mask_name = None
-                if kp.get("enabled", True):          # 사진 영역은 그대로 두고 초록 부분만 생성
+                if kp.get("enabled", True) or keep > 0:
+                    # enabled: 사진 영역은 그대로 두고 초록 부분만 생성 (+ 마지막에 원본 다시 붙임)
+                    # strength(0~1): 사진 영역을 그만큼만 덜 바꿈 → 글씨·형태 최대한 유지, 주변과는 자연스럽게
                     mask_path = await asyncio.to_thread(self._keep_mask, run_id, p["placement"], f"{d}/keep_mask.png",
-                                                        kp.get("mask_feather", 0.04))
+                                                        kp.get("mask_feather", 0.04),
+                                                        1.0 if kp.get("enabled", True) else keep)
                     mask_name = await self._upload_file(backend, mask_path, f"{tag}_keep_mask.png")
+                if mask_name:                         # 원본 글씨를 막는 네거티브('text', 'signs') → 깨진 글씨만 막기
+                    p["prompts"] = {**p["prompts"], "negative": llm.photo_safe_negative(p["prompts"].get("negative", ""))}
                 tmpl = workflow.load_template(self.cfg["workflow"])
                 st = self._settings(p, meta, p["prompts"].get("positive", ""))
                 wf_api, seeds = workflow.build(tmpl, self.cfg["node_ids"], control_image=name, prompts=p["prompts"],
                                                seed1=p.get("seed1"), seed2=p.get("seed2"),
-                                               prefix=prefix, settings=st, keep_mask=mask_name)
+                                               prefix=prefix, settings=st, keep_mask=mask_name,
+                                               protect_refine=bool(mask_name) and kp.get("protect_refine", True))
+                if mask_name:
+                    extra["photo_keep"] = 1.0 if kp.get("enabled", True) else keep
                 if kp.get("enabled", True) and kp.get("upscale_photo", True):
                     # 원본 사진 자리 화질: 사진을 원래 해상도로 AI 업스케일 → 마지막에 이걸 붙임
                     ph_name = await backend.upload(await asyncio.to_thread(self._source_png, run_id), f"{tag}_photo.png")
@@ -170,11 +179,22 @@ class GenerateMixin:
 
         meta["attempts"].append({"n": n, "backend": bk, "prompt_id": pid, "mode": mode, "out_nodes": out_nodes,
                                  **(extra if mode == "pole" else {}),
+                                 **({"photo_keep": extra["photo_keep"]} if "photo_keep" in extra else {}),
                                  "placement": p.get("placement") or {}, "prompts": p.get("prompts") or {},
                                  "settings": p.get("settings") or {}, "seeds": seeds, "state": "queued",
                                  "files": [], "created": now()})
         self.store.write(run_id, meta)
         return jresp({"attempt": n, "prompt_id": pid, "seeds": seeds})
+
+    def _photo_keep(self, p) -> float:
+        """원본 사진 영역 유지 세기 0~1 (요청 값 > config keep_photo.strength). 0 이면 예전처럼 전부 새로 그림."""
+        v = p.get("photo_keep")
+        if v is None or v == "":
+            v = self.cfg.get("keep_photo", {}).get("strength", 0)
+        try:
+            return float(min(1.0, max(0.0, float(v))))
+        except (TypeError, ValueError):
+            return 0.0
 
     def _settings(self, p, meta, positive=""):
         """화면 설정 + config 기본값 + 리파인(LoRA 없는 디테일 패스) 프롬프트."""
@@ -267,6 +287,7 @@ class GenerateMixin:
                 await self._save_output(backend, df, self.store.path(run_id, adir(n, "debug_2k_after_seam.png")))
             except Exception as e:
                 print(f"[pano360] 진단 2K 저장 실패: {e}")
+        post = self.cfg.get("post", {})
         try:     # 좌우 이음새에 생긴 가는 세로선 지우기 (ComfyUI 결과에서 x=0 에 1~2px@2K 선이 나오는 경우)
             cols = await asyncio.to_thread(erp.fix_wrap_line, path)
             if cols:
@@ -274,8 +295,25 @@ class GenerateMixin:
                 print(f"[pano360] 이음새 세로선 지움: 열 {cols[0]}~{cols[-1]}")
             gap = await asyncio.to_thread(erp.match_wrap_tone, path)
             att["wrap_tone_gap"] = round(gap, 1)     # VR 에서 이음새 양쪽 밝기 차이가 띠처럼 보이지 않게
+            if post.get("wrap_blend", True):         # 굵은 선·점선·남은 단차: 이음새 띠째로 다중 대역으로 다시 이음
+                att["wrap_blend_px"] = await asyncio.to_thread(erp.blend_wrap_band, path, post.get("wrap_band", 0.012))
+            if post.get("wrap_sky", True):          # 이음새 근처 하늘의 큰 얼룩(복원 띠 톤 차이) → 매끈하게
+                att["wrap_sky"] = round(await asyncio.to_thread(erp.bridge_wrap_sky, path), 2)
         except Exception as e:
             print(f"[pano360] 이음새 선 처리 실패: {e}")
+        if post.get("pole_converge", True):
+            try:     # 천정·발밑 하늘의 방사형 별무늬 → 한 점으로 모이게 (무늬 있는 곳은 그대로)
+                att["pole_converge"] = await asyncio.to_thread(erp.pole_converge, path, post.get("pole_arc_deg", 8.0))
+                print(f"[pano360] 극점 수렴 {att['pole_converge']}")
+            except Exception as e:
+                print(f"[pano360] 극점 수렴 실패: {e}")
+        try:     # 이음새 연결 점검 (참고용 경고: 띠 색·뿌연 정도·결·양쪽 재질)
+            qa = await asyncio.to_thread(erp.continuity_report, path)
+            att["continuity"] = qa
+            for w in qa.get("warnings", []):
+                print(f"[pano360] 이음새 점검 경고: {w}")
+        except Exception as e:
+            print(f"[pano360] 이음새 점검 실패: {e}")
         try:
             att["seam"] = await asyncio.to_thread(erp.wrap_seam_score, path)
             print(f"[pano360] 좌우 이음새 {att['seam']}")

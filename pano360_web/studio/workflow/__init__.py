@@ -9,7 +9,8 @@ ComfyUI 그래프 만들기
 
 from .core import node, ksampler, random_seed, load_template, ui_to_api, ui_node, ui_values, ui_set
 from .generate import (SEAM_TRIGGER, build, lock_photo_region, green_seam_band, seam_second_pass,
-                       attach_refine_to_generate, add_photo_upscale, build_photo_upscale)
+                       attach_refine_to_generate, add_photo_upscale, build_photo_upscale, protect_photo_in_refine,
+                       outward_seam_feather, soft_seam_noise_mask, strip_green_trigger, seam_second_prompt)
 from .enhance import build_enhance, build_pole, add_refine
 from .video import (VIDEO_IDS, VIDEO_CROP_IDS, CROP_MAX_PIXELS, OUT_W, OUT_H, video_mask_mode, video_rect_canvas,
                     video_rect_feather, video_has_crop, fill_video_node, video_node_api, crop_plan, fill_crop)

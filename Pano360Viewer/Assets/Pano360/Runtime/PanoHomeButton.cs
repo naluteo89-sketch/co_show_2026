@@ -37,11 +37,15 @@ namespace Pano360
         static readonly InputFeatureUsage<Quaternion> PointerRotation = new InputFeatureUsage<Quaternion>("PointerRotation");
         static readonly InputFeatureUsage<Vector3> PointerPosition = new InputFeatureUsage<Vector3>("PointerPosition");
 
-        public static PanoHomeButton Create(Transform head)
+        string caption = "HOME";
+
+        /// caption: 버튼 글자 (HOME, EXIT 등). 같은 버튼 모양·조작을 다른 기능에 재사용
+        public static PanoHomeButton Create(Transform head, string caption = "HOME")
         {
-            var go = new GameObject("Pano360 Home Button");
+            var go = new GameObject($"Pano360 {caption} Button");
             var b = go.AddComponent<PanoHomeButton>();
             b.head = head;
+            b.caption = caption;
             b.Build();
             b.SetVisible(false);
             return b;
@@ -84,7 +88,7 @@ namespace Pano360
             var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             text = tgo.AddComponent<TextMesh>();
             text.font = font;
-            text.text = "HOME";
+            text.text = caption;
             text.fontSize = 80;
             text.characterSize = 0.0075f;
             text.anchor = TextAnchor.MiddleCenter;

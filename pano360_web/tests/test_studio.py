@@ -368,6 +368,19 @@ class ImageAndVideoTests(unittest.TestCase):
         api_, _ = workflow.build(t, cfg["node_ids"], control_image="c.png", prompts=pr, settings={"steps": 4, "cfg": 1.0})
         self.assertEqual(api_["916"]["inputs"]["denoise"], 0.6)                  # 이음새 2차: 좁은 띠를 약하게
         self.assertEqual(api_["105"]["inputs"]["image"], ["920", 0])             # 되돌리기 전에 2차 결과 사용
+        # 이음새 노이즈 마스크: 띠 안은 1, 바깥으로만 부드럽게 (1차 32px · 2차 16px @2K)
+        self.assertEqual(api_["82"]["inputs"]["mask"], ["934", 0])
+        self.assertEqual(api_["914"]["inputs"]["mask"], ["937", 0])
+        self.assertEqual((api_["933"]["inputs"]["left"], api_["934"]["inputs"]["x"]), (32, 768 - 32))
+        self.assertEqual(api_["932"]["inputs"]["width"], 512 + 64)
+        self.assertEqual((api_["936"]["inputs"]["left"], api_["937"]["inputs"]["x"]), (16, 928 - 16))
+        # 2차 프롬프트엔 초록 채우기 문장이 없음 (1차는 그대로)
+        self.assertEqual(api_["915"]["inputs"]["conditioning"], ["938", 0])
+        self.assertNotIn("green", api_["938"]["inputs"]["text"])
+        self.assertTrue(api_["77"]["inputs"]["text"].startswith("Fill the green"))
+        off, _ = workflow.build(t, cfg["node_ids"], control_image="c.png", prompts=pr,
+                                settings={"steps": 4, "cfg": 1.0, "seam_noise_feather": 0})
+        self.assertEqual(off["82"]["inputs"]["mask"], ["102", 0])                # 0 이면 예전 딱딱한 마스크
         # 사진 붙이기: 경계 바깥 생성 부분 톤이 사진 쪽으로 이어짐 (사각형 경계 단차 감소)
         fin = Image.new("RGB", (512, 256), (90, 90, 90))
         ph = Image.new("RGB", (64, 64), (200, 200, 200))

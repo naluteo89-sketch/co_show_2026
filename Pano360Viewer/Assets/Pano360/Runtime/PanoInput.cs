@@ -11,7 +11,7 @@ using UnityEngine.InputSystem;
 
 namespace Pano360
 {
-    public enum PanoAction { None, Next, Prev, Recenter, Home }
+    public enum PanoAction { None, Next, Prev, Recenter, Home, Quit }
 
     /// <summary>
     /// 조작 매핑
@@ -20,6 +20,7 @@ namespace Pano360
     ///  핸드트래킹: 오른손 핀치 = 다음, 왼손 핀치 = 이전, 양손 동시 핀치 = 정면 맞추기
     ///  에디터 키보드: ←/→ = 이전/다음, R = 정면 맞추기
     ///  홈(취소): 왼쪽 컨트롤러 ≡ 메뉴 버튼, HOME 버튼에 레이를 맞추고 트리거, HOME 버튼을 보며 핀치, 키보드 Esc/H
+    ///  앱 끄기(홈 화면): EXIT 버튼에 레이를 맞추고 트리거, EXIT 버튼을 보며 핀치, 키보드 Q
     /// </summary>
     [DefaultExecutionOrder(-50)]
     public class PanoInput : MonoBehaviour
@@ -41,6 +42,9 @@ namespace Pano360
         public System.Func<XRNode, bool> pointerOverHome;
         /// HOME 버튼을 바라보고 있는지
         public System.Func<bool> gazeOverHome;
+        /// EXIT(앱 끄기) 버튼 위에 해당 컨트롤러 레이가 있는지 / 바라보고 있는지
+        public System.Func<XRNode, bool> pointerOverQuit;
+        public System.Func<bool> gazeOverQuit;
 
         public PanoAction Consume()
         {
@@ -51,7 +55,7 @@ namespace Pano360
 
         void Fire(PanoAction a)
         {
-            if (pending == PanoAction.None || a == PanoAction.Recenter || a == PanoAction.Home) pending = a;
+            if (pending == PanoAction.None || a == PanoAction.Recenter || a == PanoAction.Home || a == PanoAction.Quit) pending = a;
         }
 
         void Update()
@@ -81,10 +85,12 @@ namespace Pano360
             d.TryGetFeatureValue(XRUsages.menuButton, out bool menu);           // 왼쪽 ≡
 
             bool overHome = pointerOverHome != null && pointerOverHome(node);
+            bool overQuit = pointerOverQuit != null && pointerOverQuit(node);
             if (menu && !s.menu) Fire(PanoAction.Home);
             if (primary && !s.primary) Fire(PanoAction.Next);
             if (secondary && !s.secondary) Fire(PanoAction.Prev);
-            if (trigger && !s.trigger) Fire(overHome ? PanoAction.Home : (isLeft ? PanoAction.Prev : PanoAction.Next));
+            if (trigger && !s.trigger)
+                Fire(overQuit ? PanoAction.Quit : overHome ? PanoAction.Home : (isLeft ? PanoAction.Prev : PanoAction.Next));
             if (click && !s.click) Fire(PanoAction.Recenter);
 
             if (!s.stickLatched && Mathf.Abs(stick.x) > stickPress)
@@ -129,6 +135,11 @@ namespace Pano360
                 waitingHand = 0;
                 Fire(PanoAction.Recenter);
             }
+            else if ((l || r) && gazeOverQuit != null && gazeOverQuit())
+            {
+                waitingHand = 0;
+                Fire(PanoAction.Quit);      // EXIT 버튼을 보며 핀치
+            }
             else if ((l || r) && gazeOverHome != null && gazeOverHome())
             {
                 waitingHand = 0;
@@ -171,11 +182,13 @@ namespace Pano360
             if (k.leftArrowKey.wasPressedThisFrame) Fire(PanoAction.Prev);
             if (k.rKey.wasPressedThisFrame) Fire(PanoAction.Recenter);
             if (k.escapeKey.wasPressedThisFrame || k.hKey.wasPressedThisFrame) Fire(PanoAction.Home);
+            if (k.qKey.wasPressedThisFrame) Fire(PanoAction.Quit);
 #elif ENABLE_LEGACY_INPUT_MANAGER
             if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.Space)) Fire(PanoAction.Next);
             if (Input.GetKeyDown(KeyCode.LeftArrow)) Fire(PanoAction.Prev);
             if (Input.GetKeyDown(KeyCode.R)) Fire(PanoAction.Recenter);
             if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.H)) Fire(PanoAction.Home);
+            if (Input.GetKeyDown(KeyCode.Q)) Fire(PanoAction.Quit);
 #endif
         }
     }
