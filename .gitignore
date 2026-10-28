@@ -54,3 +54,48 @@ pano360_web/runs/
 
 # ===== 로그 =====
 *.log
+
+# ===== 비밀값 · 키 (키는 C:\keydata 같은 저장소 밖에 둠) =====
+keydata/
+*_key
+*_key.txt
+credentials*.json
+secrets*.json
+*.local.json
+.env.local
+
+# ===== 도구·세션 메타데이터 =====
+.claude/
+.codex/
+.agents/
+.copilot/
+*.code-workspace
+*.orig
+*.rej
+*.bak
+*.tmp
+
+# ===== 생성 결과 · 테스트 결과 (무거움) =====
+# 웹 실행 기록(업로드 사진·프롬프트·결과) — 위치 상관없이
+runs/
+pano360_web/uploads/
+pano360_web/outputs/
+# Quest 뷰어에 복사되는 결과 이미지·영상 (photos.json 은 빌드 때 자동 생성). 폴더 자체(Pano360.meta)는 유지
+Pano360Viewer/Assets/StreamingAssets/Pano360/*
+# 비교·분석 이미지, 실험 결과
+docs/analysis/
+kling_test/
+comfy_nodes/**/experiments/*.png
+comfy_nodes/**/experiments/*.jpg
+*_dbg_*
+*_compare.jpg
+*_compare.png
+# Unity 빌드 디버그 정보 (루트에 생긴 것 포함)
+*_BurstDebugInformation_DoNotShip/
+# 테스트 · 도구 캐시
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+test-results/
+node_modules/
