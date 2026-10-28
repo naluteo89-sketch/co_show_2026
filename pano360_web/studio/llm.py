@@ -6,114 +6,161 @@ LLM 지시문 · 응답 스키마 · 프롬프트 조립 (HTTP 호출은 openai_
 # LoRA 트리거 문구 — 첫 패스 프롬프트는 반드시 이 문장으로 시작해야 함 (test.json 노트)
 TRIGGER = ("Fill the green spaces according to the image. Outpaint as a seamless 360 equirectangular "
            "panorama (2:1). Keep the horizon level. Match left and right edges.")
-LIGHT_TMPL = ("Same {lighting} as the reference photo everywhere: identical sun direction, exposure, "
-              "white balance and color grading across the full 360 degrees, {lighting_detail}.")
+LIGHT_TMPL = ("Same {lighting} as the photo all around: identical sun direction, exposure, "
+              "white balance and colors across the full 360 degrees; {lighting_detail}.")
 TAIL = "Photorealistic raw photo, natural contrast, true-to-life colors, fine natural detail."
-# 360 고정 문구 (LLM 결과와 상관없이 항상): 하늘·발밑이 한 점으로 자연스럽게 모이고 주인공은 한 번만
-SPHERE_TAIL = ("The sky continues smoothly and evenly up to the zenith and the ground continues evenly beneath the "
-               "camera. The main subject appears only once.")
-NEG_360 = ("radial streaks, light rays, sun rays, sunbeams, lens flare, sun disk overhead, starburst, star-shaped pattern in "
-           "the sky, pinched sky, vertical line in the sky, sky color bands, duplicated main subject, second copy of the "
-           "building, ghosted semi-transparent objects, floating structure, object hanging in the sky, structure cut in half, "
-           "pillar directly under the camera, ground material changing abruptly, patchwork ground, railing ending abruptly, "
-           "mismatched horizon height")
-# LLM 이 써도 코드에서 지우는 말 (360 에서 별무늬·이음새·과장 문제를 만드는 표현)
-_BANNED = (r"\b(sun ?rays?|sunbeams?|god ?rays?|light (?:rays?|beams?)|crepuscular rays?|lens flares?|starbursts?|"
-           r"rainbows?|dramatic|cinematic|epic|8k|4k|hdr|fisheye|wide[- ]angle|bokeh|tilt[- ]shift)\b")
 
 NEG_COMMON = ("inconsistent lighting, different time of day, exposure mismatch, brightness gradient, color shift, "
               "color cast, green tint, desaturated area, visible seams, mismatched lighting, repeated textures, "
               "warped perspective, blurry edges, low quality, out of frame, floating objects, mismatched colors, "
-              "hard edges, garbled text, gibberish lettering, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, "
+              "hard edges, text, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, "
               "black borders, broken horizon, duplicated objects, duplicate people, HDR look, oversharpened, oversaturated, "
               "overexposed sky, blown-out highlights, halos around edges, painterly texture, smeared ground, swirl at the bottom")
 SEAM_POS_TMPL = ("Fill the green spaces according to the image. Repair only the central vertical seam of this 360 equirectangular panorama. Seamlessly continue "
-                 "the {seam_elements} across the band. The ground stays the same material and pattern from left to right "
-                 "({ground}); the sky stays the same ({sky}); the horizon line, railings, walls and paths line up and run "
-                 "straight through without ending, bending or changing height. Nothing new appears inside the band. "
-                 "Match the brightness, white balance, color, sharpness and {lighting_short} "
-                 "of both sides exactly; the band must not be darker, lighter, hazier or softer than its neighbors. "
+                 "the {seam_elements} across the band. Match the brightness, white balance, color and {lighting_short} "
+                 "of both sides exactly; the band must not be darker or lighter than its neighbors. "
                  "Photorealistic, no visible join.")
-SEAM_NEG_COMMON = ("new object in the band, wall end, building edge, object cut in half, "
-                   "different ground material, material change, texture change, paving pattern change, misaligned railing, "
-                   "broken wall, step in the horizon, haze patch, foggy band, blurry band, semi-transparent ghost, "
-                   "inconsistent lighting, exposure mismatch, brightness gradient, color shift, color cast, green tint, "
+SEAM_NEG_COMMON = ("inconsistent lighting, exposure mismatch, brightness gradient, color shift, color cast, green tint, "
                    "desaturated area, split screen, vertical dividing line, hard edge, mismatched horizon, text, watermark")
 
-SYSTEM = """You are a 360 VR panorama continuity specialist. You write prompts for a FLUX.2 Klein + 360-ERP-outpaint LoRA pipeline.
-Your top priority is a world that is physically continuous all the way around the viewer: the left and right edges of the
-panorama (0/360 degrees, directly behind the viewer) must join invisibly; the ground is one continuous surface with the same
-material and pattern; the sky is one continuous sky; nothing appears in a strange place (no structure floating in the air,
-cut in half at the seam, standing directly under or over the camera, or sticking out of the ground or sky). A plain, boring,
-continuous surrounding is always better than an interesting but discontinuous one.
+# 생성 모델 사실 (분석·검수 LLM 이 프롬프트를 이 모델에 맞게 쓰도록 둘 다에 넣음)
+MODEL_FACTS = """GENERATOR FACTS (write for this model):
+- Model: FLUX.2 Klein 4B, step-distilled: 4 sampling steps at CFG 1. Only the positive prompt has any effect; the
+  negative prompt is ignored. Text encoder: Qwen3-4B, which reads plain English sentences and spatial relations well.
+- It draws every noun it reads, literally. Naming something (even after "no", "without", "not") makes it appear.
+  Negation and orders ("make", "extend", "avoid", "remove") are not understood.
+- Earlier sentences weigh more than later ones; a long prompt dilutes the end. The final prompt is about 200 words:
+  the code adds a fixed LoRA trigger first, a lighting sentence, constraint sentences and a quality sentence, so never
+  add style, quality, camera or lens words yourself.
+- LoRA: "360 ERP outpaint" (trigger "Fill the green spaces according to the image..."). The photo sits on a green
+  2:1 equirectangular canvas and the model paints the green part; behind the viewer is the part farthest from the
+  photo and is invented almost entirely from the words. Typical failures when the words are vague: a second copy of
+  the photo's main subject, roads/paths/railings/bridges that fork or stop, translucent overlapping trees or poles
+  where two continuations meet, sand or beach ground, people.
+- What works: photo-caption sentences with concrete nouns, materials, colors, sizes and positions relative to the
+  viewer ("behind the viewer", "to the left", "along the horizon", "underfoot"), one idea per sentence, singular for
+  things that appear once, and an explicit statement of how every continuous line (road, path, railing, fence, wall,
+  shoreline, power line) runs on around the viewer.
+"""
+
+SYSTEM = """You write prompts for a FLUX.2 Klein + 360-ERP-outpaint LoRA pipeline.
 The user's single photo is pasted onto a 2:1 equirectangular canvas; everything else (the other ~300 degrees,
-sky and ground) is generated. Your job is to describe the WHOLE surrounding environment so the outpaint is
-plausible, consistent and high quality.
+sky and ground) is generated from your words, so everything you write must already describe exactly the right
+world, in the photo's own mood.
 
-Rules:
-- English, concrete visual nouns and materials. No camera/lens jargon, no style words like "cinematic", "8k".
-- scene: one or two sentences. Start with the place (name it only if clearly identifiable, e.g. a famous landmark),
-  then the main subject, then what plausibly surrounds it in all directions including behind the camera,
-  the ground directly beneath the camera (material and texture, since VR viewers look straight down) and the sky
-  overhead (clouds/haze/clear, so it is not a flat white blank). 25-60 words.
+""" + MODEL_FACTS + """
+Work in two steps.
 
-360 safety rules (the panorama is viewed in a VR headset; break these and the result shows seams, streaks or duplicates):
-- The main subject of the photo exists ONCE, in front. Never describe it again for the sides or behind the camera.
-- Behind the camera and to the sides, describe only simple, continuous surroundings that already appear at the
-  photo's left/right edges (same ground material, same low distant background such as treeline, sea horizon, wall).
-  Do not invent new landmarks, tall buildings, towers, large trees or anything close to the camera.
-- Sky: describe it as smooth and continuous up to the zenith, same weather as the photo. No sun disk overhead, no sun
-  rays, light beams, lens flare, rainbows, dramatic or radial clouds. Only mention a canopy, roof or ceiling overhead
-  if the photo itself is clearly taken under one.
-- Ground: one continuous, evenly textured material directly beneath; no holes, water or objects right below the camera
-  unless the photo is clearly taken over water.
-- Materials: name ONE ground material (and one wall/railing material if any) and keep it everywhere; never switch from
-  paving to grass, sand to water, wood to stone etc. around the viewer unless the photo itself shows that change.
-- Structures (railings, walls, paths, shorelines, horizons) continue at the same height and line all the way around and
-  meet themselves behind the viewer; they never end abruptly, float, or change height.
-- Keep lettering that is in the photo; never ask to remove or change it.
-- lighting: short phrase that matches the photo, e.g. "natural daytime lighting", "warm late-afternoon sunlight",
-  "overcast diffuse daylight", "night street lighting".
-- lighting_detail: 4-10 words, e.g. "soft daylight, clear consistent sky".
-- lighting_short: 1-3 words used in the seam prompt, e.g. "daylight", "night lighting".
+STEP 1 - "observed": read the photo carefully and record only what you can actually see.
+- place_type: the kind of place (e.g. "lakeside with a long pedestrian bridge", "dirt courtyard of a Korean hall").
+- time_weather: time of day and weather as seen.
+- light: light direction, shadow length/darkness, contrast, color temperature.
+- atmosphere: the mood in 2-5 words, no colors (e.g. "calm, crisp autumn").
+- people_amount: "none" if no people are visible; "few_distant" if only a few small or distant people;
+  "many" if people are a clear part of the scene (a busy street, a crowd).
+- haze_present: true only if fog, mist or haze is clearly visible.
+- main_subject: the one main subject in 2-5 words, singular (e.g. "wooden pavilion on the bridge"); "none" if none.
+- main_subject_count: how many of the main subject are visible (usually 1; 0 if none).
+- subject_is_structure: true only if the main subject is a built object (building, pavilion, bridge, tower, statue,
+  gate, boat); false for natural or open things (a path, avenue, lake, forest, mountain, field).
+- viewer_standing_on: the solid surface the camera stands on, from the photo's foreground, with an article (e.g. "a lakeside
+  stone path", "a wooden bridge deck", "a gravel courtyard"). Water only if the photo is clearly taken from a boat or in the water;
+  otherwise choose the nearest plausible shore, deck or path.
+- ground_material: the most specific everyday name of what is underfoot, named by its firm main surface
+  (packed dirt, compacted earth, gravel, granite paving, asphalt, wooden deck, lawn ...). Use "sand" only when loose
+  sand is clearly the main surface, and "beach" only for a real seashore or dunes.
+- ground_mistake: the one wrong ground a generator is most likely to paint instead of THIS ground, judged from THIS
+  photo (another material, e.g. asphalt for fine gravel, lawn for a dirt yard, loose sand for packed earth);
+  "" if there is no clear risk. Never the ground that is actually there.
+- ground_details: color, dry/wet, and how plain or littered it looks overall (e.g. "mostly bare, a few grass tufts").
+- sky: cloud amount and shape, color, brightness; "not visible" if no sky.
+- left_edge / right_edge: what is visible at the photo's left and right borders.
+- absent: 3-8 things that are NOT in the photo and a generator might wrongly add here
+  (e.g. "people", "second pavilion", "extra bridge", "beach sand", "boats", "buildings on the shore").
+
+STEP 2 - prompt fields, written from STEP 1 only:
+- scene: 30-60 words. The place and the main subject exactly as in the photo, with its real materials, colors and
+  details. Name the place only if clearly identifiable. Refer to things that appear once in the singular
+  ("a pavilion", never "pavilions"). Never mention people, visitors, crowds or activities: the generated
+  world must stay empty of people (people already in the photo stay as they are).
+- surroundings: 30-55 words, a plain description (not instructions like "extend" or "continue the"). What is to the
+  left, right and behind the viewer at a distance: the left_edge / right_edge things (trees, walls, fences, buildings,
+  water, hills ...) continued with the same kind, size and spacing as in the photo, so the world feels full, not empty.
+  For every continuous line in the photo (road, path, railing, fence, wall, shoreline, power line, bridge deck),
+  say in one plain sentence how it runs on around and behind the viewer as a person would expect (one road that
+  curves on, a railing that follows the walkway, a shoreline that closes the bay ...). Do not describe the ground or things lying on it here (that is ground_below), and no extra branches, bushes or
+  grass in the foreground. Never add a second main subject, new buildings, extra bridges or structures that the
+  edges do not suggest.
+- ground_below: 6-12 words: viewer_standing_on, its color and how plain it is, exactly like the ground in the
+  photo's foreground (e.g. "a packed-earth courtyard, dry beige and mostly bare"). Do not list litter (needles,
+  twigs, branches, leaves, pebbles) unless it clearly covers the photo's ground. No camera, tripod, feet, shadows
+  or viewing-angle words.
+- sky_above: 6-15 words, what is directly overhead. Same weather as the photo.
+- lighting: short phrase that matches the photo, e.g. "clear autumn afternoon sunlight".
+- lighting_detail: 4-10 words, a lowercase phrase without a final period.
+- lighting_short: 1-3 words used in the seam prompt.
 - lighting_negatives: lighting conditions that must NOT appear (the opposite times of day / weather).
-  For a daytime photo: night, dusk, sunset, twilight, dark sky, stars, moon, artificial lights, day-night split.
-- content_negatives: 6-12 failure modes specific to THIS scene (e.g. "distorted bridge geometry", "duplicated rocks",
-  "invented architectural details", "unnatural water flow", "sky on the bottom", "paving turning into grass",
-  "railing ending mid-air").
-  Never list text, letters, signs or signboards themselves as negatives: real lettering in the photo must be kept.
-- seam_elements: comma-separated list of 4-8 elements that must continue across the seam band (behind the camera):
-  only continuous background elements (sky, ground material, distant horizon, treeline, wall), never the main subject.
+- content_negatives: 6-12 failure modes specific to THIS scene (e.g. "second pavilion", "extra lake crossing",
+  "people on the bridge", "warped railing").
+- seam_elements: comma-separated 4-8 continuous background elements behind the viewer (from the edges, ground, sky),
+  never the main subject.
 - horizon_y: where the true horizon (eye level) sits in the photo, 0=top edge, 1=bottom edge; null if not visible.
 - hfov_estimate: horizontal field of view in degrees of the photo (phone main camera ~ 65-75, ultra-wide ~ 100-120).
-- ground_below: 8-20 words, what is directly beneath the camera seen from straight above (e.g. "weathered flat granite
-  paving stones with thin grass in the joints and a few fallen yellow leaves"). No camera, tripod, feet or shadows.
-- sky_above: 6-15 words, what is directly overhead looking straight up (e.g. "soft grey overcast sky with light mist").
-  Plain and even; no sun, rays or distinct objects unless the photo is under a canopy/roof.
-- summary_ko / tips_ko: Korean, for the operator. tips_ko: risks for this photo (e.g. people, text, tilted horizon,
-  very narrow FOV) and what to adjust.
+- summary_ko / tips_ko: Korean, for the operator. tips_ko: risks for this photo and what to adjust.
+
+Style: English, concrete visual nouns, materials and colors. No camera/lens jargon, no style words like
+"cinematic", "dramatic", "8k". Haze, mist or fog words only if haze_present is true.
 """
+
+_OBSERVED = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "place_type": {"type": "string"},
+        "time_weather": {"type": "string"},
+        "light": {"type": "string"},
+        "atmosphere": {"type": "string"},
+        "people_amount": {"type": "string", "enum": ["none", "few_distant", "many"]},
+        "haze_present": {"type": "boolean"},
+        "main_subject": {"type": "string"},
+        "main_subject_count": {"type": "integer"},
+        "subject_is_structure": {"type": "boolean"},
+        "viewer_standing_on": {"type": "string"},
+        "ground_material": {"type": "string"},
+        "ground_mistake": {"type": "string"},
+        "ground_details": {"type": "string"},
+        "sky": {"type": "string"},
+        "left_edge": {"type": "string"},
+        "right_edge": {"type": "string"},
+        "absent": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["place_type", "time_weather", "light", "atmosphere", "people_amount", "haze_present", "main_subject",
+                 "main_subject_count", "subject_is_structure", "viewer_standing_on", "ground_material", "ground_mistake", "ground_details", "sky", "left_edge", "right_edge", "absent"],
+}
 
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
+        "observed": _OBSERVED,                       # 먼저 관찰 (응답이 이 순서로 채워짐)
         "scene": {"type": "string"},
+        "surroundings": {"type": "string"},
+        "ground_below": {"type": "string"},
+        "sky_above": {"type": "string"},
         "lighting": {"type": "string"},
         "lighting_detail": {"type": "string"},
         "lighting_short": {"type": "string"},
         "lighting_negatives": {"type": "array", "items": {"type": "string"}},
         "content_negatives": {"type": "array", "items": {"type": "string"}},
         "seam_elements": {"type": "string"},
-        "ground_below": {"type": "string"},
-        "sky_above": {"type": "string"},
         "horizon_y": {"type": ["number", "null"]},
         "hfov_estimate": {"type": "number"},
         "summary_ko": {"type": "string"},
         "tips_ko": {"type": "string"},
     },
-    "required": ["scene", "lighting", "lighting_detail", "lighting_short", "lighting_negatives",
-                 "content_negatives", "seam_elements", "ground_below", "sky_above", "horizon_y", "hfov_estimate", "summary_ko", "tips_ko"],
+    "required": ["observed", "scene", "surroundings", "ground_below", "sky_above", "lighting", "lighting_detail",
+                 "lighting_short", "lighting_negatives", "content_negatives", "seam_elements", "horizon_y",
+                 "hfov_estimate", "summary_ko", "tips_ko"],
 }
 
 
@@ -128,35 +175,21 @@ def _join(items):
     return ", ".join(out)
 
 
-_TEXT_WORDS = ("text", "letter", "lettering", "sign", "signs", "signage", "signboard", "caption", "captions",
-               "writing", "inscription", "characters", "calligraphy")
-_TEXT_OK = ("garbled", "gibberish", "watermark", "distorted lettering")
+import re as _re
 
-
-def photo_safe_negative(neg: str) -> str:
-    """원본 사진의 글씨(현판·간판)를 지키는 네거티브: 'text', 'invented signs or lettering' 처럼 글씨 자체를 막는 항목은 빼고
-    'garbled text, gibberish lettering'(깨진 글씨)만 막음. 사진에 있던 글씨를 모델이 지우거나 뭉개지 않게."""
-    import re
-    keep = []
-    for p in (neg or "").split(","):
-        t = p.strip()
-        if not t:
-            continue
-        words = set(re.findall(r"[a-z]+", t.lower()))
-        if words & set(_TEXT_WORDS) and not any(k in t.lower() for k in _TEXT_OK):
-            continue
-        keep.append(t)
-    return _join([", ".join(keep), "garbled text, gibberish lettering"])
+_BANNED = r"\b(cinematic|dramatic|epic|8k|4k|hdr|fisheye|wide[- ]angle|bokeh|lens flares?|god ?rays?|sun ?rays?|light beams?)\b"
+_HAZE_ADJ = r"\b(hazy|misty|foggy|smoky)\s*"
+_HAZE_NOUN = r"\b(haze|mist|fog|smog)\b"
+_PEOPLE = r"\b(people|persons?|pedestrians|visitors?|tourists?|crowds?|walkers?|couples?|families|children|hikers?|strollers?)\b"
 
 
 def _clean(t: str, max_words: int | None = None) -> str:
-    """LLM 문장에서 금지 표현 제거 + 길이 제한."""
-    import re
-    t = re.sub(_BANNED, "", t or "", flags=re.I)
-    t = re.sub(r"\s{2,}", " ", t)
-    t = re.sub(r"\b(with|and|of|in|by)\s+(?=(and|with|over|under|in|on|of|by)\b|[,.;]|$)", "", t, flags=re.I)
-    t = re.sub(r"\s{2,}", " ", t)
-    t = re.sub(r"\s+([,.;])", r"\1", t).strip(" ,;")
+    """LLM 문장 다듬기: 금지 표현 제거 · 빈자리 정리 · 길이 제한."""
+    t = _re.sub(_BANNED, "", t or "", flags=_re.I)
+    t = _re.sub(r"\s{2,}", " ", t)
+    t = _re.sub(r"\b(with|and|of|in|by)\s+(?=(and|with|of|in|by)\b|[,.;]|$)", "", t, flags=_re.I)
+    t = _re.sub(r"\s{2,}", " ", t)
+    t = _re.sub(r"\s+([,.;])", r"\1", t).strip(" ,;")
     if max_words:
         w = t.split()
         if len(w) > max_words:
@@ -164,37 +197,192 @@ def _clean(t: str, max_words: int | None = None) -> str:
     return t
 
 
-def sanitize_analysis(a: dict) -> dict:
-    """LLM 분석 결과를 360 에 안전하게 (지시를 어겨도 코드에서 한 번 더 막음):
-    금지 표현 제거 · 길이 제한 · 글씨를 막는 네거티브 제거 · 개수 제한."""
+def _sentence(t: str) -> str:
+    t = t.strip()
+    return (t if t.endswith((".", "!", "?")) else t + ".") if t else ""
+
+
+def _people(o: dict) -> str:
+    """none / few_distant / many (예전 분석의 people_present 도 읽음)."""
+    v = o.get("people_amount")
+    if v in ("none", "few_distant", "many"):
+        return v
+    return "many" if o.get("people_present", False) else "none"
+
+
+def _prep(a: dict) -> dict:
+    """LLM 해석을 프롬프트용으로 가공: 관찰(observed)에 맞지 않는 말 지우기(안개·사람) + 길이 제한."""
     a = dict(a)
-    a["scene"] = _clean(a.get("scene", ""), 70)
-    for k, n in (("lighting", 8), ("lighting_detail", 12), ("lighting_short", 4), ("ground_below", 24), ("sky_above", 18)):
+    o = a.get("observed") or {}
+    lim = {"scene": 55, "surroundings": 60, "ground_below": 14, "sky_above": 14, "lighting": 12, "lighting_detail": 12,
+           "lighting_short": 4, "seam_elements": 30}
+    for k, n in lim.items():
         if k in a:
-            a[k] = _clean(a.get(k, ""), n)
-    a["seam_elements"] = _clean(a.get("seam_elements", ""), 30)
-    cn = [x for x in (_clean(c, 10) for c in a.get("content_negatives") or []) if x]
-    cn = [x for x in photo_safe_negative(", ".join(cn)).split(", ") if x not in ("garbled text", "gibberish lettering")]
-    a["content_negatives"] = cn[:12]
-    a["lighting_negatives"] = [x for x in (_clean(c, 6) for c in a.get("lighting_negatives") or []) if x][:10]
+            t = a.get(k) or ""
+            if o and not o.get("haze_present", False):
+                t = _re.sub(_HAZE_ADJ, "", t, flags=_re.I)
+                t = _re.sub(_HAZE_NOUN, "clouds" if k == "sky_above" else "light", t, flags=_re.I)
+            if o and k in ("scene", "surroundings", "seam_elements"):   # 생성 영역엔 사람 안 그림 (사진 속 사람은 사진 픽셀로 남음)
+                # 사람이 나오는 구절(쉼표 단위)을 통째로 뺌 — "visitors strolling" 같은 말이 남지 않게
+                t = ", ".join(f for f in _re.split(r",\s*", t) if not _re.search(_PEOPLE, f, flags=_re.I))
+            a[k] = _clean(t, n)
+    for k in ("lighting", "lighting_detail", "lighting_short"):   # 템플릿 문장 중간에 들어감: 끝 마침표 없음
+        if a.get(k):
+            a[k] = a[k].rstrip(" .,;")
+    if a.get("lighting_detail"):                          # 소문자 시작
+        t = a["lighting_detail"]
+        a["lighting_detail"] = t[:1].lower() + t[1:]
     return a
 
 
+def _constraints(a: dict) -> str:
+    """증류 모델(CFG 1)은 네거티브를 안 보므로, 꼭 지켜야 할 것을 Positive 문장으로 (관찰 기반, 사진마다 자동)."""
+    o = a.get("observed") or {}
+    if not o:
+        return ""
+    out = []
+    subj = _clean(o.get("main_subject") or "", 6)
+    n = o.get("main_subject_count")
+    structure = o.get("subject_is_structure", True)       # 예전 분석은 필드 없음 → 기존처럼 적용
+    if structure and subj and subj.lower() not in ("none", "n/a") and isinstance(n, int) and n >= 1:
+        num = {1: "only one", 2: "only two", 3: "only three"}.get(n, f"only {n}")
+        out.append(f"There is {num} {subj}, where it is in the photo, and no other similar structure")
+    out.append("The whole place is quiet and deserted")   # 사람 수와 관계없이 항상 ('people' 단어는 넣으면 오히려 그림)
+    if not o.get("haze_present", False):
+        out.append("The air is clear")
+    return " ".join(_sentence(x) for x in out)
+
+
+def _ground_mistake(a: dict) -> str:
+    """LLM 이 사진을 보고 고른 '잘못 그려지기 쉬운 바닥' — 실제 바닥과 겹치면 쓰지 않음 (고정 규칙 없음)."""
+    o = a.get("observed") or {}
+    gx = _clean(o.get("ground_mistake") or "", 5).rstrip(" .")
+    if not gx or gx.lower() in ("none", "n/a"):
+        return ""
+    real = " ".join([o.get("viewer_standing_on") or "", o.get("ground_material") or "", a.get("ground_below") or ""]).lower()
+    return "" if gx.lower() in real else gx
+
+
+def _guard_negatives(a: dict) -> str:
+    o = a.get("observed") or {}
+    out = [_clean(x, 6) for x in (o.get("absent") or [])]
+    if o:
+        out.append("people, crowd, pedestrians, figures")
+    subj = _clean(o.get("main_subject") or "", 6)
+    if subj and subj.lower() not in ("none", "n/a"):
+        out.append(f"second {subj}, duplicate {subj}")
+    gx = _ground_mistake(a)
+    if gx:
+        out.append(gx)
+    return ", ".join(x for x in out if x)
+
+
 def assemble(a: dict) -> dict:
-    """LLM 재료 → 최종 4개 프롬프트."""
-    a = sanitize_analysis(a)
-    positive = " ".join([TRIGGER, a["scene"].strip(),
-                         LIGHT_TMPL.format(lighting=a["lighting"].strip(), lighting_detail=a["lighting_detail"].strip()),
-                         SPHERE_TAIL, TAIL])
-    negative = _join([", ".join(a["lighting_negatives"]), NEG_COMMON, NEG_360, ", ".join(a["content_negatives"]),
-                      "garbled text, gibberish lettering"])
+    """LLM 재료 → 최종 4개 프롬프트. 생성 모델이 잘 따르도록 정해진 순서의 짧은 문장으로 정리:
+    트리거 → 장면(주인공) → 주변·뒤 → 발밑 → 머리 위 → 분위기·빛 → 꼭 지킬 것 → 화질."""
+    a = _prep(a)
+    o = a.get("observed") or {}
+    parts = [TRIGGER, _sentence(a["scene"])]
+    if a.get("surroundings"):
+        parts.append(_sentence("All around: " + a["surroundings"]))
+    if a.get("ground_below"):                              # 서 있는 곳 (물 위에 뜬 시점 방지 — viewer_standing_on 으로 시작)
+        g = a["ground_below"].rstrip(" .")
+        # 'not X' 는 넣지 않음: 증류 모델(CFG 1)은 부정을 못 알아듣고 X(예: beach sand)를 오히려 그림 → X 는 네거티브에만
+        parts.append(_sentence("The viewer stands on " + g[:1].lower() + g[1:]))
+    if a.get("sky_above"):
+        parts.append(_sentence("Overhead: " + a["sky_above"]))
+    if o.get("atmosphere"):
+        parts.append(_sentence("Mood: " + _clean(o["atmosphere"], 8)))
+    parts.append(LIGHT_TMPL.format(lighting=a["lighting"].strip(), lighting_detail=a["lighting_detail"].strip())
+                 if a.get("lighting_detail") else
+                 _sentence(LIGHT_TMPL.split(";")[0].format(lighting=a["lighting"].strip())))
+    c = _constraints(a)
+    if c:
+        parts.append(c)
+    parts.append(TAIL)
+    positive = " ".join(p for p in parts if p)
+    guards = _guard_negatives(a)
+    negative = _join([", ".join(a["lighting_negatives"]), NEG_COMMON, ", ".join(a["content_negatives"]), guards])
     seam_positive = SEAM_POS_TMPL.format(seam_elements=a["seam_elements"].strip(),
-                                         ground=(a.get("ground_below") or "the same ground as both sides").strip().rstrip("."),
-                                         sky=(a.get("sky_above") or "the same sky as both sides").strip().rstrip("."),
                                          lighting_short=a["lighting_short"].strip())
-    seam_negative = _join([", ".join(a["lighting_negatives"]), SEAM_NEG_COMMON])
+    seam_negative = _join([", ".join(a["lighting_negatives"]), SEAM_NEG_COMMON, guards])
     return {"positive": positive, "negative": negative,
             "seam_positive": seam_positive, "seam_negative": seam_negative}
+
+
+# ----------------------------------------------------------------------------- 2K 초안 검수 (업스케일 전)
+REVIEW_SYSTEM = """You are the quality checker for a 360 panorama generator used in a VR (HMD) exhibit.
+You get a DRAFT (low resolution) generated from one real photo, shown as four flat views taken from the viewer's
+position: FRONT (contains the original photo), RIGHT, BACK, LEFT; plus the original photo.
+Judge it the way an ordinary visitor would: does the whole place look like one real, natural place that matches
+the photo? Ignore softness, small blur and low resolution (it is a draft and will be upscaled later).
+
+Major problems (any one fails the draft):
+- roads, paths, railings, fences, walls, shorelines, power lines or bridges that fork, end abruptly, bend
+  impossibly, float, or do not continue the way a person would expect;
+- structures or objects with no reason to be there, a second copy of the photo's main subject, half objects;
+- semi-transparent ghost shapes, double exposure, objects blending into each other;
+- people or animals that are not in the photo;
+- ground material, weather, sky or time of day that do not match the photo;
+- a visible vertical seam, hard brightness step or color band.
+Minor problems: small oddities a visitor would hardly notice.
+
+Return: ok (true only if there is no major problem), score 0-10 (10 = indistinguishable from a real 360 photo of
+this place), problems (each: view, severity, what is wrong, what a person would expect there instead), fix_hint,
+summary_ko (one Korean sentence for the operator).
+
+fix_hint is added to the prompt of the next draft ("" if ok), right after the description of the surroundings.
+Follow the generator facts below and write it as a plain description of what IS there, like a photo caption:
+- 1-2 short declarative sentences, at most 45 words, most important thing first.
+- Only physical things that should be visible, with their material, color, size and where they are relative to the
+  viewer ("behind the viewer", "to the left", "along the horizon", "underfoot").
+- Describe how lines continue in space: e.g. "Behind the viewer the concrete walkway runs straight on toward a low
+  wooded island, lined on both sides by gray posts with four pale cables."
+- Never name the defect or what must disappear (no "seam", "line", "ghost", "transparent", "duplicate", "no",
+  "without", "remove", "avoid", "instead"); never use verbs that give orders ("make", "extend", "fix", "ensure").
+- No camera, lens, style or quality words; no people.
+
+""" + MODEL_FACTS
+
+REVIEW_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "ok": {"type": "boolean"},
+        "score": {"type": "number"},
+        "problems": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"view": {"type": "string", "enum": ["front", "right", "back", "left"]},
+                           "severity": {"type": "string", "enum": ["major", "minor"]},
+                           "what": {"type": "string"}, "expected": {"type": "string"}},
+            "required": ["view", "severity", "what", "expected"]}},
+        "fix_hint": {"type": "string"},
+        "summary_ko": {"type": "string"},
+    },
+    "required": ["ok", "score", "problems", "fix_hint", "summary_ko"],
+}
+
+
+_HINT_BAD = r"\b(seams?|lines?|ghost(ed|ly|s)?|transparent|translucent|duplicates?|artifacts?|stitch(ing|ed)?)\b"
+
+
+def with_fix_hints(prompts: dict, hints) -> dict:
+    """검수에서 나온 고칠 점(사진 설명 같은 긍정 문장)을 다음 초안 Positive 의 주변 묘사 바로 뒤(서 있는 곳 문장 앞)에 넣음.
+    검수 LLM 은 직전 프롬프트를 보고 쓰므로 가장 최근 것 하나만 씀 (쌓지 않음). 결함 이름 단어가 섞여 있으면 그 문장은 뺌."""
+    hs = [h for h in hints if (h or "").strip()]
+    if not hs:
+        return dict(prompts)
+    sents = [x for x in _re.split(r"(?<=[.!?])\s+", _clean(hs[-1])) if x and not _re.search(_HINT_BAD, x, flags=_re.I)]
+    add = " ".join(_sentence(x) for x in sents)
+    if not add:
+        return dict(prompts)
+    pos = prompts.get("positive", "")
+    for anchor in ("The viewer stands on", "Overhead:", TAIL):
+        if anchor in pos:
+            pos = pos.replace(anchor, add + " " + anchor, 1)
+            break
+    else:
+        pos = pos + " " + add
+    return {**prompts, "positive": pos}
 
 
 POLE_POS_TMPL = ("Repair only the two round patches of this rotated 360 panorama: on the left the ground directly beneath "
@@ -207,7 +395,6 @@ POLE_NEG = ("swirl, vortex, radial blur, stretched texture, smeared ground, pinc
 
 
 def pole_prompts(a: dict) -> dict:
-    a = sanitize_analysis(a)
     ground = (a.get("ground_below") or "natural ground matching the surrounding area").strip()
     sky = (a.get("sky_above") or "sky matching the surrounding sky").strip()
     pos = POLE_POS_TMPL.format(ground=ground, sky=sky, lighting_short=(a.get("lighting_short") or "daylight").strip())
@@ -219,11 +406,11 @@ REFINE_TMPL = ("A high-resolution photograph. {scene} Natural fine detail, reali
                "foliage and water, crisp but not oversharpened, true-to-life colors, natural contrast.")
 REFINE_NEG = ("painting, illustration, cartoon, anime, digital art, CGI, 3d render, watercolor, flat colors, "
               "posterized, smooth plastic texture, oversharpened, halos, HDR look, oversaturated, blurry, "
-              "garbled text, gibberish lettering, watermark")
+              "text, watermark")
 
 
 def refine_prompts(a: dict, fallback_positive: str = "") -> dict:
-    scene = _clean(a.get("scene") or "", 70)
+    scene = (a.get("scene") or "").strip()
     if not scene and fallback_positive:
         scene = fallback_positive.replace(TRIGGER, "").strip()
     return {"positive": REFINE_TMPL.format(scene=scene), "negative": REFINE_NEG}

@@ -13,9 +13,7 @@ SEAM_TRIGGER = ("Fill the green spaces according to the image. This is a 360 equ
 
 def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
           seed1=None, seed2=None, prefix="VR360/studio", settings: dict | None = None,
-          keep_mask: str | None = None, protect_refine: bool = False) -> tuple[dict, dict]:
-    """keep_mask: 사진 영역 마스크 파일(흰=생성). 회색이면 그만큼만 덜 바뀜(부드러운 유지).
-    protect_refine: 8K 리파인에서도 사진 영역은 같은 마스크만큼 리파인 전(업스케일) 결과를 유지."""
+          keep_mask: str | None = None, wrap: dict | None = None) -> tuple[dict, dict]:
     api = ui_to_api(copy.deepcopy(template_ui))
 
     def set_(key, field, value):
@@ -69,35 +67,29 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
     # (특히 4스텝 distilled 모델) 1차 결과의 가운데 좁은 띠만 약하게 다시 그려 양쪽을 이어 줌
     seam_second_pass(api, ids, s2)
 
-    # 이음새 합성 마스크를 '띠 바깥쪽'으로 페더: 띠 안쪽 페더는 새로 그린 띠와 그 아래 원래 그림(전혀 다른 내용)을
-    # 반투명하게 겹쳐 양쪽 끝에 '의문의 흐림·유령 난간'을 만듦. 띠 바깥은 새로 그린 결과가 원본과 같으므로(latent 유지) 거기서 섞음.
-    outward_seam_feather(api)
-
-    # 이음새 latent 노이즈 마스크(82·914)를 띠 바깥쪽으로 부드럽게: 딱 끊긴 마스크는 다시 그린 띠와 원래 latent 사이에
-    # 계단을 남겨, 바깥 페더 뒤 8K 에서 띠 경계(±1024px)에 날카로운 세로 경계로 보임.
+    # [이음새 수정 · 우선] 합성 마스크는 띠 바깥쪽으로 페더(띠 안쪽 페더 = 양옆 '의문의 흐림·유령 난간'),
+    # latent 노이즈 마스크(82·914)도 띠 바깥쪽으로 부드럽게(딱 끊기면 8K 에서 띠 경계 ±1024px 에 날카로운 세로 경계),
     # 2차 패스엔 초록이 없으므로 "Fill the green…" 문장을 뺀 프롬프트를 따로 줌.
+    # 아래 이음새 편집·사진 걸침(seam_skip_rows)은 이 마스크들 위에서 동작.
+    outward_seam_feather(api)
     soft_seam_noise_mask(api, float(st.get("seam_noise_feather", 0.25)))
     seam_second_prompt(api, ids)
+
+    # 이음새 마무리 편집: 이음새 둘레를 편집 모델로 '한 장의 자연스러운 사진'으로 다시 그려 겹침·선·밝기 단차 정리
+    if st.get("seam_edit", False) and not wrap:
+        seam_edit_pass(api, ids, s2)
+
+    if wrap:
+        # 사진을 0°/360° 에 걸쳐 놓고 생성한 경우: 이음새는 사진 위(하늘)·아래(바닥)에만 있음
+        # → 사진 줄은 이음새 복원에서 빼고, 끝에서 원래 방향으로 돌림
+        seam_skip_rows(api, int(wrap["top"]), int(wrap["bottom"]))
+        wrap_roll(api, int(wrap["shift"]))
 
     # 디테일 리파인 (LoRA 없이) — 업스케일 블러/뭉개짐 대신 실제 질감
     rf = st.get("refine")
     if rf and rf.get("enabled", True):
-        if attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts) and keep_mask and protect_refine:
-            protect_photo_in_refine(api)
+        attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts)
     return api, {"seed1": s1, "seed2": s2}
-
-
-def protect_photo_in_refine(api: dict, mask_node="950", pre_node="117", noise_node="119") -> bool:
-    """리파인 결과 위에 리파인 전 8K(업스케일만 한 것)를 사진 영역에만 섞어 글씨·형태가 리파인에서 다시 바뀌지 않게.
-    섞는 양 = 생성 마스크를 뒤집은 값 (사진 영역 = 유지 세기, 생성 영역 = 0). 마스크는 2K 라 합성 때 8K 로 늘어남."""
-    if not all(k in api for k in (mask_node, pre_node, noise_node)):
-        return False
-    refined = api[noise_node]["inputs"]["image"]
-    api["960"] = node("InvertMask", {"mask": [mask_node, 0]}, "사진 영역 유지 세기 (리파인 보호)")
-    api["961"] = node("ImageCompositeMasked", {"destination": refined, "source": [pre_node, 0], "mask": ["960", 0],
-                                               "x": 0, "y": 0, "resize_source": False}, "리파인 · 사진 영역은 리파인 전 유지")
-    api[noise_node]["inputs"]["image"] = ["961", 0]
-    return True
 
 
 def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
@@ -111,6 +103,74 @@ def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
     api["950"] = node("LoadImageMask", {"image": mask_image, "channel": "red"}, "생성할 곳 마스크 (사진 영역 유지)")
     api["951"] = node("SetLatentNoiseMask", {"samples": lat, "mask": ["950", 0]}, "사진 영역은 다시 그리지 않음")
     api[smp]["inputs"]["latent_image"] = ["951", 0]
+    return True
+
+
+def wrap_shift_for(yaw: float, W: int) -> tuple[int, float]:
+    """사진을 생성 캔버스 양끝(0°/360°)에 걸쳐 놓기: 최종 = np.roll(생성, s).
+    반환 (s, 생성용 yaw). 사진 가운데가 캔버스 끝(x=0/W)에 오고, 결과는 s 만큼 돌려 원래 yaw 로."""
+    xf = W * (0.5 + float(yaw) / 360.0)               # 최종에서 사진 가운데 x
+    s = int(round(xf)) % W                           # 생성 캔버스에서는 x=0(=W) 에 있게
+    yaw_gen = ((xf - s) / W - 0.5) * 360.0
+    return s, yaw_gen
+
+
+def _hole(api: dict, nid: str, width: int, top: int, bottom: int, feather: int):
+    """사진 줄(top~bottom) 구멍 마스크 (가장자리 feather px 부드럽게)."""
+    api[nid] = node("SolidMask", {"value": 1.0, "width": width, "height": bottom - top}, "사진 걸침 · 사진 줄")
+    if feather > 0:
+        api[nid + "f"] = node("FeatherMask", {"mask": [nid, 0], "left": 0, "top": feather, "right": 0, "bottom": feather},
+                              "사진 걸침 · 사진 줄 가장자리")
+        return [nid + "f", 0]
+    return [nid, 0]
+
+
+def seam_skip_rows(api: dict, top: int, bottom: int, feather: int = 16) -> bool:
+    """이음새 복원(1차·2차)을 사진 줄(top~bottom)에선 하지 않음: 초록은 위·아래만, 마스크는 사진 줄을 뺌."""
+    if not all(k in api for k in ("901", "902", "102", "104", "101", "100")) or bottom - top < 8:
+        return False
+    H = int(api["100"]["inputs"].get("height", 1024))
+    bw, bx = int(api["101"]["inputs"]["width"]), int(api["902"]["inputs"]["x"])
+    # 초록: 사진 위(0~top)·아래(bottom~H)만
+    api["901"]["inputs"]["height"] = max(8, top)
+    api["903"] = node("EmptyImage", {"width": bw, "height": max(8, H - bottom), "batch_size": 1, "color": 0x00FF00},
+                      "이음새 띠 초록 (사진 아래)")
+    api["904"] = node("ImageCompositeMasked", {"destination": ["902", 0], "source": ["903", 0], "x": bx, "y": bottom,
+                                               "resize_source": False}, "이음새 띠를 초록으로 (사진 아래)")
+    api["79"]["inputs"]["pixels"] = ["904", 0]
+    # 1차 노이즈(82)·합성(85), 2차 노이즈(914)·합성(920)이 실제로 쓰는 마스크에서 사진 줄 빼기
+    # (마스크는 띠 밖에선 0 이므로 가로 전체 구멍으로 빼도 같음 → 바깥 페더·부드러운 노이즈 마스크 폭과 무관)
+    W = int(api["100"]["inputs"].get("width", 2048))
+    for user, f, nid in (("82", 0, "940"), ("85", feather, "942"), ("914", 0, "944"), ("920", feather, "946")):
+        if user not in api or not isinstance(api[user]["inputs"].get("mask"), list):
+            continue
+        hole = _hole(api, nid, W, top, bottom, f)
+        sub = nid + "s"
+        api[sub] = node("MaskComposite", {"destination": api[user]["inputs"]["mask"], "source": hole, "x": 0, "y": top,
+                                          "operation": "subtract"}, "사진 걸침 · 사진 줄 빼기")
+        api[user]["inputs"]["mask"] = [sub, 0]
+    return True
+
+
+def wrap_roll(api: dict, s: int) -> bool:
+    """이음새 복원 결과(108)를 s 만큼 가로로 돌려 원래 방향으로 → 업스케일 패딩(110·111·112)이 이것을 씀."""
+    if not all(k in api for k in ("108", "110", "111", "112", "100")):
+        return False
+    W = int(api["100"]["inputs"].get("width", 2048))
+    s %= W
+    if s == 0:
+        return True
+    api["960"] = node("ImageCrop", {"image": ["108", 0], "width": s, "height": int(api["100"]["inputs"]["height"]),
+                                    "x": W - s, "y": 0}, "사진 걸침 → 원래 방향: 오른쪽 끝")
+    api["961"] = node("ImageCrop", {"image": ["108", 0], "width": W - s, "height": int(api["100"]["inputs"]["height"]),
+                                    "x": 0, "y": 0}, "사진 걸침 → 원래 방향: 나머지")
+    api["962"] = node("ImageCompositeMasked", {"destination": ["108", 0], "source": ["960", 0], "x": 0, "y": 0,
+                                               "resize_source": False}, "사진 걸침 → 원래 방향: 앞")
+    api["963"] = node("ImageCompositeMasked", {"destination": ["962", 0], "source": ["961", 0], "x": s, "y": 0,
+                                               "resize_source": False}, "사진 걸침 → 원래 방향: 뒤")
+    for k in ("110", "111"):
+        api[k]["inputs"]["image"] = ["963", 0]
+    api["112"]["inputs"]["source"] = ["963", 0]
     return True
 
 
@@ -241,6 +301,61 @@ def seam_second_prompt(api: dict, ids: dict) -> bool:
                       "이음새 2차 · 프롬프트 (초록 채우기 문장 뺌)")
     api["915"]["inputs"]["conditioning"] = ["938", 0]
     return True
+
+
+SEAM_EDIT_PROMPT = ("Edit this photo into one natural, continuous photograph. Remove any semi-transparent ghosted or "
+                    "doubled shapes, vertical lines, seams and brightness steps. Keep the same scene, objects, layout, "
+                    "colors, lighting and sharpness. Photorealistic.")
+
+
+def seam_edit_pass(api: dict, ids: dict, seed: int, size: int = 1024, feather: int = 256) -> bool:
+    """이음새 복원이 끝난 그림(920, 이음새가 가운데)에서 가운데 size×H 를 잘라 편집 모델(LoRA 없음)로 다시 그림
+    → 가운데는 편집 결과, 양옆 feather px 동안 원래 그림으로 서서히 → 되돌리기(105~107)가 이 결과를 씀."""
+    src = "920" if "920" in api else "85"
+    seam = str(ids.get("sampler_seam"))
+    if not all(k in api for k in (src, seam, "100", "105", "106", "107", "79")):
+        return False
+    W = int(api["100"]["inputs"].get("width", 2048))
+    H = int(api["100"]["inputs"].get("height", 1024))
+    x = (W - size) // 2
+    vae = api["79"]["inputs"]["vae"]
+    sm = api[seam]["inputs"]
+    clip = api[str(ids["positive"])]["inputs"]["clip"]
+    api["980"] = node("ImageCrop", {"image": [src, 0], "width": size, "height": H, "x": x, "y": 0}, "이음새 편집 · 가운데 자르기")
+    api["981"] = node("VAEEncode", {"pixels": ["980", 0], "vae": vae}, "이음새 편집 · 인코드")
+    api["982"] = node("CLIPTextEncode", {"text": SEAM_EDIT_PROMPT, "clip": clip}, "이음새 편집 · 지시문")
+    api["983"] = node("ReferenceLatent", {"conditioning": ["982", 0], "latent": ["981", 0]}, "이음새 편집 · 참조(원래 그림)")
+    api["984"] = ksampler([str(ids["unet"]), 0], ["983", 0], sm["negative"], ["981", 0], seed=int(seed) + 2,
+                          steps=sm.get("steps", 20), cfg=sm.get("cfg", 4.0), denoise=1.0,
+                          sampler_name=sm.get("sampler_name", "euler"), scheduler=sm.get("scheduler", "simple"),
+                          title="이음새 편집 · 다시 그림 (LoRA 없음)")
+    api["985"] = node("VAEDecode", {"samples": ["984", 0], "vae": vae}, "이음새 편집 · 디코드")
+    api["986"] = node("SolidMask", {"value": 1.0, "width": size, "height": H}, "이음새 편집 · 마스크")
+    api["987"] = node("FeatherMask", {"mask": ["986", 0], "left": feather, "top": 0, "right": feather, "bottom": 0},
+                      "이음새 편집 · 양옆 부드럽게")
+    api["988"] = node("ImageCompositeMasked", {"destination": [src, 0], "source": ["985", 0], "mask": ["987", 0],
+                                               "x": x, "y": 0, "resize_source": False}, "이음새 편집 · 합성")
+    for k in ("105", "106"):
+        api[k]["inputs"]["image"] = ["988", 0]
+    api["107"]["inputs"]["destination"] = ["988", 0]
+    return True
+
+
+def draft_only(api: dict, ids: dict, prefix: str) -> str:
+    """2K 초안까지만: 이음새 복원 결과(108)만 저장하고 8K 단계(최종 저장)는 실행하지 않음. 저장 노드 id 반환."""
+    api.pop(str(ids["save_final"]), None)
+    api["973"] = node("SaveImage", {"images": ["108", 0], "filename_prefix": f"{prefix}_draft_2k"}, "2K 초안 (검수용)")
+    return "973"
+
+
+def final_from_draft(api: dict, ids: dict, image: str) -> str:
+    """검수 통과한 2K 초안(LoadImage) → 같은 8K 단계(패딩 → 업스케일 → 리파인 → 디더 → 저장). 저장 노드 id 반환."""
+    api["970"] = node("LoadImage", {"image": image}, "검수 통과 2K 초안")
+    for k in ("110", "111"):
+        api[k]["inputs"]["image"] = ["970", 0]
+    api["112"]["inputs"]["source"] = ["970", 0]
+    api.pop("973", None)
+    return str(ids["save_final"])
 
 
 def attach_refine_to_generate(api: dict, ids: dict, rf: dict, prompts: dict, W=8192, H=4096) -> bool:

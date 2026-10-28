@@ -105,6 +105,177 @@ class WorkflowTests(unittest.TestCase):
                 if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int):
                     self.assertIn(value[0], graph)
 
+class WrapInPhotoTests(unittest.TestCase):
+    def test_wrap_graph(self):
+        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        template = workflow.load_template(ROOT / cfg["workflow"])
+        prompts = dict(positive="scene", negative="bad", seam_positive="seam", seam_negative="bad seam")
+        s, yaw_gen = workflow.wrap_shift_for(-20, 2048)
+        self.assertEqual(s, 910)
+        self.assertAlmostEqual(abs(yaw_gen), 180, delta=0.2)
+        g, _ = workflow.build(template, cfg["node_ids"], control_image="c.png", prompts=prompts, seed1=1, seed2=2,
+                              wrap={"shift": s, "top": 360, "bottom": 660})
+        self.assertEqual(g["79"]["inputs"]["pixels"], ["904", 0])          # 초록은 사진 위·아래만
+        self.assertEqual(g["901"]["inputs"]["height"], 360)
+        self.assertEqual(g["904"]["inputs"]["y"], 660)
+        self.assertEqual(g["82"]["inputs"]["mask"], ["940s", 0])          # 사진 줄은 다시 그리지 않음
+        self.assertEqual(g["85"]["inputs"]["mask"], ["942s", 0])
+        self.assertEqual(g["914"]["inputs"]["mask"], ["944s", 0])
+        self.assertEqual(g["920"]["inputs"]["mask"], ["946s", 0])
+        self.assertEqual(g["940s"]["inputs"]["operation"], "subtract")
+        self.assertEqual(g["112"]["inputs"]["source"], ["963", 0])       # 끝에서 원래 방향으로
+        self.assertEqual(g["960"]["inputs"]["x"], 2048 - s)
+        self.assertEqual(g["963"]["inputs"]["x"], s)
+        for item in g.values():
+            for value in item["inputs"].values():
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int):
+                    self.assertIn(value[0], g)
+
+    def test_seam_edit_pass(self):
+        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        template = workflow.load_template(ROOT / cfg["workflow"])
+        prompts = dict(positive="scene", negative="bad", seam_positive="seam", seam_negative="bad seam")
+        g, _ = workflow.build(template, cfg["node_ids"], control_image="c.png", prompts=prompts, seed1=1, seed2=2,
+                              settings={"seam_edit": True})
+        self.assertEqual(g["980"]["inputs"]["image"], ["920", 0])
+        self.assertEqual(g["980"]["inputs"]["x"], 512)
+        self.assertEqual(g["984"]["inputs"]["model"], [str(cfg["node_ids"]["unet"]), 0])
+        self.assertEqual(g["105"]["inputs"]["image"], ["988", 0])
+        self.assertEqual(g["107"]["inputs"]["destination"], ["988", 0])
+        for item in g.values():
+            for value in item["inputs"].values():
+                if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int):
+                    self.assertIn(value[0], g)
+
+    def test_draft_and_final_graphs(self):
+        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        ids = cfg["node_ids"]
+        template = workflow.load_template(ROOT / cfg["workflow"])
+        prompts = dict(positive="scene", negative="bad", seam_positive="seam", seam_negative="bad seam")
+        g, _ = workflow.build(template, ids, control_image="c.png", prompts=prompts, seed1=1, seed2=2)
+        out = workflow.draft_only(g, ids, "VR360/x")
+        self.assertNotIn(str(ids["save_final"]), g)
+        self.assertEqual(g[out]["inputs"]["images"], ["108", 0])
+        f, _ = workflow.build(template, ids, control_image="c.png", prompts=prompts, seed1=1, seed2=2)
+        out = workflow.final_from_draft(f, ids, "draft.png")
+        self.assertEqual(out, str(ids["save_final"]))
+        self.assertEqual(f["112"]["inputs"]["source"], ["970", 0])
+        self.assertEqual(f["970"]["inputs"]["image"], "draft.png")
+        for gg in (g, f):
+            for item in gg.values():
+                for value in item["inputs"].values():
+                    if isinstance(value, list) and len(value) == 2 and isinstance(value[1], int):
+                        self.assertIn(value[0], gg)
+
+    def test_fix_hints_latest_only_after_surroundings(self):
+        base = {"positive": "Scene. All around: hills. The viewer stands on a deck. " + llm.TAIL, "negative": "x"}
+        long = ("Behind the viewer the concrete walkway runs straight on toward a low wooded island, lined on both "
+                "sides by gray posts with four pale cables and calm blue-green water stretching to distant hills. "
+                "There is no seam line in the sky.")
+        p = llm.with_fix_hints(base, ["Old hint about a road.", long])
+        self.assertNotIn("Old hint", p["positive"])
+        self.assertIn("distant hills. The viewer stands on a deck.", p["positive"])   # 길이 제한 없음, 서 있는 곳 앞
+        self.assertNotIn("seam", p["positive"])                                        # 결함 이름 문장은 뺌
+        self.assertEqual(llm.with_fix_hints(base, ["", ""])["positive"], base["positive"])
+
+    def test_no_wrap_is_unchanged(self):
+        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        template = workflow.load_template(ROOT / cfg["workflow"])
+        prompts = dict(positive="scene", negative="bad", seam_positive="seam", seam_negative="bad seam")
+        g, _ = workflow.build(template, cfg["node_ids"], control_image="c.png", prompts=prompts, seed1=1, seed2=2)
+        self.assertNotIn("960", g)
+        self.assertEqual(g["82"]["inputs"]["mask"], ["102", 0])
+        self.assertEqual(g["112"]["inputs"]["source"], ["108", 0])
+
+
+class VersionBTests(unittest.TestCase):
+    def test_bigger_photo_same_horizon(self):
+        import math
+        from studio.handlers.generate import version_b_placement
+        pl = {"yaw": -20, "pitch": 5.0, "hfov": 70, "vfov": None}
+        b = version_b_placement(pl, 0.6)
+        self.assertAlmostEqual(b["hfov"], 70 / 0.6, places=1)
+        self.assertEqual(b["yaw"], -20)
+        t0 = math.tan(math.radians(5)) / math.tan(math.radians(35))      # 사진 안 수평선 위치(비율)는 그대로
+        t1 = math.tan(math.radians(b["pitch"])) / math.tan(math.radians(b["hfov"] / 2))
+        self.assertAlmostEqual(t0, t1, places=3)
+        self.assertEqual(version_b_placement({"yaw": 0, "pitch": 0, "hfov": 100}, 0.4)["hfov"], 140.0)   # 상한
+        self.assertEqual(version_b_placement(pl, 1.0)["hfov"], 70)
+
+    def test_ab_limits_extra_tilt(self):
+        from studio.handlers.generate import version_b_placement
+        tilted = {"yaw": -20, "pitch": 25.46, "hfov": 70}                       # 위로 기운 사진 (등대)
+        self.assertGreater(version_b_placement(tilted, 0.6)["pitch"], 45)          # B: 기울기 크게 늘어남
+        ab = version_b_placement(tilted, 0.6, max_extra_tilt=8)
+        self.assertLessEqual(ab["pitch"], 25.46 + 8.01)
+        self.assertGreater(ab["hfov"], 70)
+        level = {"yaw": 0, "pitch": 0, "hfov": 70}                               # 수평 사진은 B 와 같음
+        self.assertEqual(version_b_placement(level, 0.6, max_extra_tilt=8)["hfov"], version_b_placement(level, 0.6)["hfov"])
+
+
+class LlmPromptTests(unittest.TestCase):
+    def _a(self, **obs):
+        o = {"place_type": "lake bridge", "time_weather": "clear afternoon", "light": "low sun", "atmosphere": "calm autumn",
+             "people_amount": "none", "haze_present": False, "main_subject": "wooden pavilion", "main_subject_count": 1,
+             "subject_is_structure": True, "viewer_standing_on": "a stone path",
+             "ground_material": "granite paving", "ground_mistake": "asphalt", "ground_details": "leaves", "sky": "blue", "left_edge": "hills",
+             "right_edge": "maple", "absent": ["boats"]}
+        o.update(obs)
+        return {"observed": o, "scene": "A pedestrian bridge with one wooden pavilion, visitors strolling, under a hazy sky.",
+                "surroundings": "wooded hills and maples", "ground_below": "A stone path with leaves.", "sky_above": "blue sky with mist",
+                "lighting": "afternoon sun", "lighting_detail": "Low sun.", "lighting_short": "daylight",
+                "lighting_negatives": ["night"], "content_negatives": ["second pavilion"], "seam_elements": "hills, water",
+                "horizon_y": 0.5, "hfov_estimate": 70, "summary_ko": "", "tips_ko": ""}
+
+    def test_observation_shapes_positive(self):
+        p = llm.assemble(self._a())
+        self.assertIn("only one wooden pavilion", p["positive"])
+        self.assertIn("quiet and deserted", p["positive"])
+        self.assertNotIn("people", p["positive"])
+        self.assertIn("All around: wooded hills", p["positive"])
+        self.assertIn("The viewer stands on a stone path with leaves.", p["positive"])
+        self.assertNotIn("asphalt", p["positive"])
+        self.assertIn("asphalt", p["negative"])
+        self.assertNotIn("sand", p["positive"])
+        self.assertIn("; low sun.", p["positive"])
+        self.assertNotIn("..", p["positive"])
+        long = self._a(); long["lighting"] = "bright daytime sunlight filtered through a dense tree canopy overhead"
+        self.assertIn("dense tree canopy overhead as the photo", llm.assemble(long)["positive"])
+        self.assertNotIn("visitors", p["positive"])
+        self.assertNotIn("hazy", p["positive"])
+        self.assertIn("pedestrian bridge", p["positive"])
+        self.assertIn("duplicate wooden pavilion", p["negative"])
+
+    def test_never_ask_for_people_and_haze_when_seen(self):
+        for amount in ("few_distant", "many"):
+            p = llm.assemble(self._a(people_amount=amount, haze_present=True))
+            self.assertNotIn("visitors", p["positive"])
+            self.assertNotIn("figures", p["positive"])
+            self.assertIn("quiet and deserted", p["positive"])
+            self.assertIn("hazy", p["positive"])
+
+    def test_ground_mistake_only_in_negative(self):
+        sandy = self._a(viewer_standing_on="a packed-earth courtyard", ground_material="packed earth", ground_mistake="loose sand")
+        sandy["ground_below"] = "A packed-earth courtyard, dry beige and mostly bare."
+        p = llm.assemble(sandy)
+        self.assertIn("stands on a packed-earth courtyard, dry beige and mostly bare.", p["positive"])
+        self.assertNotIn("sand", p["positive"])
+        self.assertIn("loose sand", p["negative"])
+        beach = self._a(viewer_standing_on="a sandy beach", ground_material="beach sand", ground_mistake="beach sand")
+        self.assertNotIn("beach sand", llm.assemble(beach)["negative"])     # 실제 바닥이면 금지어로 안 씀
+
+    def test_natural_subject_has_no_single_structure_rule(self):
+        p = llm.assemble(self._a(main_subject="tree-lined avenue", subject_is_structure=False))
+        self.assertNotIn("similar structure", p["positive"])
+
+    def test_old_analysis_still_works(self):
+        a = self._a()
+        a["observed"].pop("people_amount"); a["observed"]["people_present"] = False
+        self.assertIn("deserted", llm.assemble(a)["positive"])
+        a.pop("observed"); a.pop("surroundings")
+        self.assertTrue(llm.assemble(a)["positive"].startswith(llm.TRIGGER))
+
+
 class StudioTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -368,19 +539,6 @@ class ImageAndVideoTests(unittest.TestCase):
         api_, _ = workflow.build(t, cfg["node_ids"], control_image="c.png", prompts=pr, settings={"steps": 4, "cfg": 1.0})
         self.assertEqual(api_["916"]["inputs"]["denoise"], 0.6)                  # 이음새 2차: 좁은 띠를 약하게
         self.assertEqual(api_["105"]["inputs"]["image"], ["920", 0])             # 되돌리기 전에 2차 결과 사용
-        # 이음새 노이즈 마스크: 띠 안은 1, 바깥으로만 부드럽게 (1차 32px · 2차 16px @2K)
-        self.assertEqual(api_["82"]["inputs"]["mask"], ["934", 0])
-        self.assertEqual(api_["914"]["inputs"]["mask"], ["937", 0])
-        self.assertEqual((api_["933"]["inputs"]["left"], api_["934"]["inputs"]["x"]), (32, 768 - 32))
-        self.assertEqual(api_["932"]["inputs"]["width"], 512 + 64)
-        self.assertEqual((api_["936"]["inputs"]["left"], api_["937"]["inputs"]["x"]), (16, 928 - 16))
-        # 2차 프롬프트엔 초록 채우기 문장이 없음 (1차는 그대로)
-        self.assertEqual(api_["915"]["inputs"]["conditioning"], ["938", 0])
-        self.assertNotIn("green", api_["938"]["inputs"]["text"])
-        self.assertTrue(api_["77"]["inputs"]["text"].startswith("Fill the green"))
-        off, _ = workflow.build(t, cfg["node_ids"], control_image="c.png", prompts=pr,
-                                settings={"steps": 4, "cfg": 1.0, "seam_noise_feather": 0})
-        self.assertEqual(off["82"]["inputs"]["mask"], ["102", 0])                # 0 이면 예전 딱딱한 마스크
         # 사진 붙이기: 경계 바깥 생성 부분 톤이 사진 쪽으로 이어짐 (사각형 경계 단차 감소)
         fin = Image.new("RGB", (512, 256), (90, 90, 90))
         ph = Image.new("RGB", (64, 64), (200, 200, 200))

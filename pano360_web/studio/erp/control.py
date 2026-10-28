@@ -33,14 +33,12 @@ def make_control(img: Image.Image, yaw, pitch, hfov, vfov=None, W=2048, H=1024) 
     return to_image(out)
 
 
-def keep_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, feather=0.04, strength=1.0) -> Image.Image:
-    """생성 때 '다시 그릴 곳' 마스크 (흰색=생성, 검정=원본 사진 유지). 사진 가장자리 feather 만큼은 섞어 그림.
-    strength < 1 이면 사진 영역이 회색(1 - strength) → 완전히 잠그지 않고 그만큼만 덜 바뀜 (글씨·형태 최대한 유지)."""
+def keep_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, feather=0.04) -> Image.Image:
+    """생성 때 '다시 그릴 곳' 마스크 (흰색=생성, 검정=원본 사진 유지). 사진 가장자리 feather 만큼은 섞어 그림."""
     sw, sh = photo_size
     u, v, f = photo_coords(W, H, np.arange(H), yaw, pitch, hfov, sh / sw, vfov)
     w, _ = edge_weight(u, v, f, feather)
-    s = float(np.clip(strength, 0.0, 1.0))
-    return Image.fromarray(((1.0 - s * w) * 255).astype(np.uint8), "L").convert("RGB")
+    return Image.fromarray(((1.0 - w) * 255).astype(np.uint8), "L").convert("RGB")
 
 
 def to_2to1(im: Image.Image) -> Image.Image:

@@ -10,7 +10,8 @@ const linkify = s => esc(s).replace(/(https?:\/\/\S+)/g, '<a href="$1" target="_
 
 export function setupPrompts() {
   const settings = () => ({steps: numberValue("g_steps"), cfg: numberValue("g_cfg"),
-    lora_strength: numberValue("g_lora"), seam_denoise: numberValue("g_seam")});
+    lora_strength: numberValue("g_lora"), seam_denoise: numberValue("g_seam"),
+    version: $("g_version").value, viewer_scale: numberValue("g_viewer")});
   store.services.settings = settings;
 
   store.on("analysis", ({analysis, prompts: pr}) => {
@@ -29,6 +30,8 @@ export function setupPrompts() {
     if (s.cfg) $("g_cfg").value = s.cfg;
     if (s.lora_strength != null) $("g_lora").value = s.lora_strength;
     if (s.seam_denoise) $("g_seam").value = s.seam_denoise;
+    if (s.version) $("g_version").value = s.version;
+    if (s.viewer_scale) $("g_viewer").value = s.viewer_scale;
     $("promptcard").scrollIntoView({behavior: "smooth"});
   });
 
@@ -38,6 +41,7 @@ export function setupPrompts() {
     const g = cfg.gen_defaults || {};
     $("g_steps").value = g.steps ?? ""; $("g_cfg").value = g.cfg ?? "";
     $("g_lora").value = g.lora_strength ?? ""; $("g_seam").value = g.seam_denoise ?? "";
+    $("g_version").value = g.version || "A"; $("g_viewer").value = g.viewer_scale ?? 0.6;
   });
 
   requestButton($("gen"), async () => {

@@ -55,6 +55,23 @@ def motion_body(model, grid_img, photo=None, context="", note="", system=None, s
     }
 
 
+def review_body(model, views_img, photo=None, context=""):
+    """2K 초안 4방향 화면(+원본 사진, 생성 프롬프트) → 검수 결과."""
+    content = [{"type": "input_text", "text": "Draft panorama, four views (top-left FRONT, top-right RIGHT, "
+                                              "bottom-left BACK, bottom-right LEFT):"},
+               {"type": "input_image", "image_url": image_data_url(views_img, 2048), "detail": "high"}]
+    if photo is not None:
+        content += [{"type": "input_text", "text": "Original photo:"},
+                    {"type": "input_image", "image_url": image_data_url(photo, 1024), "detail": "low"}]
+    if context:
+        content.append({"type": "input_text", "text": "Generation prompt used:\n" + context})
+    return {
+        "model": model,
+        "input": [{"role": "system", "content": llm.REVIEW_SYSTEM}, {"role": "user", "content": content}],
+        "text": {"format": {"type": "json_schema", "name": "pano_review", "strict": True, "schema": llm.REVIEW_SCHEMA}},
+    }
+
+
 def parse_response(data: dict) -> dict:
     if data.get("error"):
         raise RuntimeError(f"OpenAI 오류: {data['error']}")
@@ -90,6 +107,10 @@ class OpenAIClient:
     async def analyze(self, img: Image.Image, note: str = "", model: str | None = None) -> tuple[dict, dict]:
         """사진 → (LLM 재료 JSON, usage). model 을 주면 그 모델로, 아니면 기본 모델로."""
         return await self._request(request_body(model or self.model, img, note))
+
+    async def review(self, views_img, photo=None, context="", model=None):
+        """2K 초안 검수 → (JSON, usage)."""
+        return await self._request(review_body(model or self.model, views_img, photo, context))
 
     async def plan_motion(self, grid_img, photo=None, context="", note="", model=None):
         """영상화: 움직일 곳(일부만) 계획 → (JSON, usage)."""
