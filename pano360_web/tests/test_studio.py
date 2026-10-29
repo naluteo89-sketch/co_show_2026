@@ -168,13 +168,13 @@ class WrapInPhotoTests(unittest.TestCase):
                         self.assertIn(value[0], gg)
 
     def test_fix_hints_latest_only_after_surroundings(self):
-        base = {"positive": "Scene. All around: hills. The viewer stands on a deck. " + llm.TAIL, "negative": "x"}
+        base = {"positive": "Scene. Hills. Underfoot is a deck. " + llm.TAIL, "negative": "x"}
         long = ("Behind the viewer the concrete walkway runs straight on toward a low wooded island, lined on both "
                 "sides by gray posts with four pale cables and calm blue-green water stretching to distant hills. "
                 "There is no seam line in the sky.")
         p = llm.with_fix_hints(base, ["Old hint about a road.", long])
         self.assertNotIn("Old hint", p["positive"])
-        self.assertIn("distant hills. The viewer stands on a deck.", p["positive"])   # 길이 제한 없음, 서 있는 곳 앞
+        self.assertIn("distant hills. Underfoot is a deck.", p["positive"])   # 길이 제한 없음, 서 있는 곳 앞
         self.assertNotIn("seam", p["positive"])                                        # 결함 이름 문장은 뺌
         self.assertEqual(llm.with_fix_hints(base, ["", ""])["positive"], base["positive"])
 
@@ -232,19 +232,39 @@ class LlmPromptTests(unittest.TestCase):
         self.assertIn("only one wooden pavilion", p["positive"])
         self.assertIn("quiet and deserted", p["positive"])
         self.assertNotIn("people", p["positive"])
-        self.assertIn("All around: wooded hills", p["positive"])
-        self.assertIn("The viewer stands on a stone path with leaves.", p["positive"])
+        self.assertIn("Wooded hills and maples.", p["positive"])
+        self.assertIn("Underfoot is a stone path with leaves.", p["positive"])
+        for w in ("viewer", "photo", "All around:", "Mood:"):
+            self.assertNotIn(w, p["positive"])
         self.assertNotIn("asphalt", p["positive"])
         self.assertIn("asphalt", p["negative"])
         self.assertNotIn("sand", p["positive"])
         self.assertIn("; low sun.", p["positive"])
         self.assertNotIn("..", p["positive"])
         long = self._a(); long["lighting"] = "bright daytime sunlight filtered through a dense tree canopy overhead"
-        self.assertIn("dense tree canopy overhead as the photo", llm.assemble(long)["positive"])
+        self.assertIn("Bright daytime sunlight filtered through a dense tree canopy overhead falls evenly everywhere",
+                      llm.assemble(long)["positive"])
         self.assertNotIn("visitors", p["positive"])
         self.assertNotIn("hazy", p["positive"])
         self.assertIn("pedestrian bridge", p["positive"])
         self.assertIn("duplicate wooden pavilion", p["negative"])
+
+    def test_clean_keeps_prepositions_and_cuts_at_sentences(self):
+        self.assertEqual(llm._clean("a path in a forest, a pavilion with a roof with tiles"),
+                         "a path in a forest, a pavilion with a roof with tiles")
+        self.assertEqual(llm._clean("cinematic view with , and of."), "view.")
+        cut = llm._clean("One two three four five six. Seven eight nine ten eleven twelve thirteen.", 10)
+        self.assertEqual(cut, "One two three four five six.")
+
+    def test_image_sent_to_llm_is_small(self):
+        import base64, io
+        from PIL import Image
+        from studio.clients.openai_client import image_data_url
+        big = Image.new("RGB", (4000, 3000), (120, 160, 200))
+        im = Image.open(io.BytesIO(base64.b64decode(image_data_url(big).split(",")[1])))
+        self.assertEqual(min(im.size), 768)
+        small = Image.new("RGB", (800, 560))
+        self.assertEqual(Image.open(io.BytesIO(base64.b64decode(image_data_url(small).split(",")[1]))).size, (800, 560))
 
     def test_never_ask_for_people_and_haze_when_seen(self):
         for amount in ("few_distant", "many"):

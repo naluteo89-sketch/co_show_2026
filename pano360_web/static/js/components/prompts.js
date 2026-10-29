@@ -18,6 +18,7 @@ export function setupPrompts() {
     show("promptcard");
     $("p_pos").value = pr.positive || ""; $("p_neg").value = pr.negative || "";
     $("p_spos").value = pr.seam_positive || ""; $("p_sneg").value = pr.seam_negative || "";
+    $("p_bpos").value = pr.back_positive || "";
     $("raw").textContent = JSON.stringify(analysis, null, 2);
   });
   store.on("run", m => { if (!m) show("promptcard", false); });
@@ -50,7 +51,7 @@ export function setupPrompts() {
     return submitJob({backend: $("backend").value, placement: store.services.placement(),
       seed1: numberValue("seed1"), seed2: numberValue("seed2"), settings: settings(),
       prompts: {positive: $("p_pos").value, negative: $("p_neg").value,
-        seam_positive: $("p_spos").value, seam_negative: $("p_sneg").value}},
+        seam_positive: $("p_spos").value, seam_negative: $("p_sneg").value, back_positive: $("p_bpos").value}},
       r => `대기 중… (seed ${r.seeds.seed1} / ${r.seeds.seed2})`);
   });
 

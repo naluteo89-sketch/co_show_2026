@@ -51,9 +51,25 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
     if keep_mask:
         lock_photo_region(api, ids, keep_mask)
 
+    if st.get("cylinder", False) and not wrap:
+        # 원통 생성: 다 그린 뒤 띠를 붙이지 않고, 생성 뒷부분을 이음새가 가운데 오게 돌려서 그림
+        # → 0°/360° 가 캔버스 안쪽에서 양쪽을 보며 한 장으로 그려짐 (초록 띠·섞기·2차 패스 없음)
+        cylinder_pass(api, ids, s1, denoise=float(st.get("cylinder_denoise", 0.6)),
+                      keep=float(st.get("cylinder_keep", 0.5)), feather=int(st.get("cylinder_feather", 128)),
+                      back_text=prompts.get("back_positive") or "")
+        rf = st.get("refine")
+        if rf and rf.get("enabled", True):
+            attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts)
+        return api, {"seed1": s1, "seed2": s2}
+
     # 이음새 복원: 띠를 초록(#00ff00)으로 칠해 아웃페인트 LoRA 방식으로 '채우기'
     # (기존: 이음새가 그대로 있는 그림을 참조로 줘서, 편집 모델이 이음새까지 그대로 다시 그림)
     green_seam_band(api, ids)
+
+    # 이음새 띠 가장자리에서 나무·구조물이 투명해지다 끊기는 문제: 띠 전체를 지우지 않고 가운데(core)만 새로 그림
+    # → 가장자리의 원래 그림을 모델이 보고 물체를 이어 그림 → 합성 시 섞는 폭도 좁게 (내용이 같아 겹침 없음)
+    if int(st.get("seam_core", 0) or 0) > 0:
+        seam_core_only(api, int(st["seam_core"]), int(st.get("seam_core_feather", 32)))
 
     # 이음새 복원은 LoRA 를 약하게 (별도 LoRA 노드 복제)
     lora_id, seam_id = str(ids.get("lora")), str(ids.get("sampler_seam"))
@@ -66,14 +82,6 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
     # 이음새 2차 다듬기: 1차(초록 띠 채우기)가 띠 가운데서 좌우를 따로 그려 '세로 선'이 남는 경우가 있어
     # (특히 4스텝 distilled 모델) 1차 결과의 가운데 좁은 띠만 약하게 다시 그려 양쪽을 이어 줌
     seam_second_pass(api, ids, s2)
-
-    # [이음새 수정 · 우선] 합성 마스크는 띠 바깥쪽으로 페더(띠 안쪽 페더 = 양옆 '의문의 흐림·유령 난간'),
-    # latent 노이즈 마스크(82·914)도 띠 바깥쪽으로 부드럽게(딱 끊기면 8K 에서 띠 경계 ±1024px 에 날카로운 세로 경계),
-    # 2차 패스엔 초록이 없으므로 "Fill the green…" 문장을 뺀 프롬프트를 따로 줌.
-    # 아래 이음새 편집·사진 걸침(seam_skip_rows)은 이 마스크들 위에서 동작.
-    outward_seam_feather(api)
-    soft_seam_noise_mask(api, float(st.get("seam_noise_feather", 0.25)))
-    seam_second_prompt(api, ids)
 
     # 이음새 마무리 편집: 이음새 둘레를 편집 모델로 '한 장의 자연스러운 사진'으로 다시 그려 겹침·선·밝기 단차 정리
     if st.get("seam_edit", False) and not wrap:
@@ -138,17 +146,22 @@ def seam_skip_rows(api: dict, top: int, bottom: int, feather: int = 16) -> bool:
     api["904"] = node("ImageCompositeMasked", {"destination": ["902", 0], "source": ["903", 0], "x": bx, "y": bottom,
                                                "resize_source": False}, "이음새 띠를 초록으로 (사진 아래)")
     api["79"]["inputs"]["pixels"] = ["904", 0]
-    # 1차 노이즈(82)·합성(85), 2차 노이즈(914)·합성(920)이 실제로 쓰는 마스크에서 사진 줄 빼기
-    # (마스크는 띠 밖에선 0 이므로 가로 전체 구멍으로 빼도 같음 → 바깥 페더·부드러운 노이즈 마스크 폭과 무관)
-    W = int(api["100"]["inputs"].get("width", 2048))
-    for user, f, nid in (("82", 0, "940"), ("85", feather, "942"), ("914", 0, "944"), ("920", feather, "946")):
-        if user not in api or not isinstance(api[user]["inputs"].get("mask"), list):
-            continue
-        hole = _hole(api, nid, W, top, bottom, f)
+    # 1차 노이즈 마스크(102)·합성 마스크(104), 2차(913·919)에서 사진 줄 빼기
+    pairs = [("102", bx, bw, 0, "940"), ("104", bx, bw, feather, "942")]
+    if "913" in api:
+        bx2, bw2 = int(api["913"]["inputs"]["x"]), int(api["912"]["inputs"]["width"])
+        pairs += [("913", bx2, bw2, 0, "944"), ("919", bx2, bw2, feather, "946")]
+    for mid, x, w, f, nid in pairs:
+        hole = _hole(api, nid, w, top, bottom, f)
         sub = nid + "s"
-        api[sub] = node("MaskComposite", {"destination": api[user]["inputs"]["mask"], "source": hole, "x": 0, "y": top,
+        api[sub] = node("MaskComposite", {"destination": [mid, 0], "source": hole, "x": x, "y": top,
                                           "operation": "subtract"}, "사진 걸침 · 사진 줄 빼기")
-        api[user]["inputs"]["mask"] = [sub, 0]
+        for k, n in api.items():                      # mid 를 쓰던 곳 → sub
+            if k == sub:
+                continue
+            for field, v in n["inputs"].items():
+                if v == [mid, 0]:
+                    n["inputs"][field] = [sub, 0]
     return True
 
 
@@ -171,6 +184,95 @@ def wrap_roll(api: dict, s: int) -> bool:
     for k in ("110", "111"):
         api[k]["inputs"]["image"] = ["963", 0]
     api["112"]["inputs"]["source"] = ["963", 0]
+    return True
+
+
+def _roll_half(api: dict, src: list, W: int, H: int, base: int, title: str) -> list:
+    """그림을 가로로 반 바퀴 돌림 (오른쪽 반 → 앞, 왼쪽 반 → 뒤). 결과 노드 [id, 0]."""
+    a, b, c, d = (str(base + i) for i in range(4))
+    h = W // 2
+    api[a] = node("ImageCrop", {"image": src, "width": W - h, "height": H, "x": h, "y": 0}, f"{title} · 오른쪽 반")
+    api[b] = node("ImageCrop", {"image": src, "width": h, "height": H, "x": 0, "y": 0}, f"{title} · 왼쪽 반")
+    api[c] = node("ImageCompositeMasked", {"destination": src, "source": [a, 0], "x": 0, "y": 0, "resize_source": False},
+                  f"{title} · 앞")
+    api[d] = node("ImageCompositeMasked", {"destination": [c, 0], "source": [b, 0], "x": W - h, "y": 0,
+                                           "resize_source": False}, f"{title} · 뒤")
+    return [d, 0]
+
+
+def cylinder_pass(api: dict, ids: dict, seed: int, denoise: float = 0.6, keep: float = 0.5, feather: int = 128,
+                  back_text: str = "") -> bool:
+    """원통 생성 (캔버스 양 끝이 붙어 있다는 걸 알고 그리게).
+    1차 생성(8) → 반 바퀴 돌림(99, 0°/360° 가 가운데) → 같은 모델·프롬프트로 뒷부분(denoise)을 다시 그림
+    (참조 control 도 똑같이 돌림) → 가운데 keep 폭만 새 그림으로, 경계는 feather 로 (경계 = ±90°, 두 그림 내용이 같은 곳)
+    → 다시 반 바퀴 (105~108) → 8K 단계.
+    denoise 0.6 = 4스텝 중 뒤 절반 남짓을 이음새가 가운데인 상태로 그리는 것과 같음 (구도는 1차에서 정해짐).
+    back_text: 뒤쪽 전용 프롬프트 (좌우 가장자리가 뒤에서 어떻게 만나는지 · 주인공 문장 없음). 없으면 본 프롬프트."""
+    main, vae_id = str(ids["sampler_main"]), str(ids["vae"])
+    need = ("8", "99", "100", "105", "106", "107", "71", str(ids["positive"]), str(ids["negative"]), main)
+    if not all(k in api for k in need):
+        return False
+    W = int(api["100"]["inputs"].get("width", 2048))
+    H = int(api["100"]["inputs"].get("height", 1024))
+    sm = api[main]["inputs"]
+    vae = [vae_id, 0]
+    ctrl = _roll_half(api, ["71", 0], W, H, 1001, "원통 · 참조 control 돌림")
+    api["1005"] = node("VAEEncode", {"pixels": ctrl, "vae": vae}, "원통 · 돌린 control 인코드")
+    cond = [str(ids["positive"]), 0]
+    clip = api[str(ids["positive"])]["inputs"].get("clip")
+    if back_text.strip() and clip:
+        api["1014"] = node("CLIPTextEncode", {"text": back_text, "clip": clip}, "원통 · 뒤쪽 프롬프트")
+        cond = ["1014", 0]
+    api["1006"] = node("ReferenceLatent", {"conditioning": cond, "latent": ["1005", 0]},
+                       "원통 · 참조 (돌린 control)")
+    api["1007"] = node("VAEEncode", {"pixels": ["99", 0], "vae": vae}, "원통 · 돌린 1차 결과 인코드")
+    api["1008"] = ksampler(sm["model"], ["1006", 0], [str(ids["negative"]), 0], ["1007", 0], seed=int(seed) + 7,
+                           steps=sm.get("steps", 20), cfg=sm.get("cfg", 4.0), denoise=float(denoise),
+                           sampler_name=sm.get("sampler_name", "euler"), scheduler=sm.get("scheduler", "simple"),
+                           title="원통 · 이음새가 가운데인 상태로 뒷부분 다시 그림")
+    api["1009"] = node("VAEDecode", {"samples": ["1008", 0], "vae": vae}, "원통 · 디코드")
+    kw = max(2 * feather + 64, min(W - 2 * feather, int(W * keep)))
+    x = (W - kw) // 2
+    api["1010"] = node("SolidMask", {"value": 1.0, "width": kw, "height": H}, "원통 · 새 그림 쓸 범위 (가운데)")
+    api["1011"] = node("FeatherMask", {"mask": ["1010", 0], "left": feather, "top": 0, "right": feather, "bottom": 0},
+                       "원통 · 경계 부드럽게")
+    api["1012"] = node("MaskComposite", {"destination": ["100", 0], "source": ["1011", 0], "x": x, "y": 0,
+                                         "operation": "add"}, "원통 · 합성 마스크")
+    api["1013"] = node("ImageCompositeMasked", {"destination": ["99", 0], "source": ["1009", 0], "mask": ["1012", 0],
+                                                "x": 0, "y": 0, "resize_source": False}, "원통 · 합성")
+    for k in ("105", "106"):
+        api[k]["inputs"]["image"] = ["1013", 0]
+    api["107"]["inputs"]["destination"] = ["1013", 0]
+    # 쓰지 않는 이음새 복원 노드는 빼서 실행되지 않게
+    for k in ("77", "78", "79", "80", "82", "83", "84", "85", "101", "102", "103", "104", "630"):
+        api.pop(k, None)
+    return True
+
+
+def seam_core_only(api: dict, core: int = 256, feather: int = 32) -> bool:
+    """1차 이음새 복원(초록 띠 채우기)을 띠 가운데 core px 로 좁힘.
+    - 초록(901/902)·노이즈 마스크(82)는 가운데 core 만 (딱 끊김 — 바깥 latent 는 그대로라 모델이 경계에서 이어 그림)
+    - 합성 마스크(85)는 core 안쪽 feather px 만 부드럽게 (예전: 512 띠 안쪽 128px 를 투명도로 섞어 물체가 반투명해지다 끊김)
+    띠 바깥과 core 바깥 ~ 띠 끝 사이는 원래 그림 그대로."""
+    if not all(k in api for k in ("901", "902", "82", "85", "100", "101", "102")):
+        return False
+    W = int(api["100"]["inputs"].get("width", 2048))
+    H = int(api["100"]["inputs"].get("height", 1024))
+    bw = int(api["101"]["inputs"].get("width", 512))
+    core = max(64, min(core, bw))
+    feather = max(0, min(feather, core // 2 - 1))
+    x = W // 2 - core // 2
+    api["901"]["inputs"]["width"] = core
+    api["902"]["inputs"]["x"] = x
+    api["905"] = node("SolidMask", {"value": 1.0, "width": core, "height": H}, "이음새 가운데만 (core)")
+    api["906"] = node("MaskComposite", {"destination": ["100", 0], "source": ["905", 0], "x": x, "y": 0, "operation": "add"},
+                      "이음새 가운데만 · 노이즈 마스크 (딱 끊김)")
+    api["82"]["inputs"]["mask"] = ["906", 0]
+    api["907"] = node("FeatherMask", {"mask": ["905", 0], "left": feather, "top": 0, "right": feather, "bottom": 0},
+                      "이음새 가운데만 · 합성 경계 좁게")
+    api["908"] = node("MaskComposite", {"destination": ["100", 0], "source": ["907", 0], "x": x, "y": 0, "operation": "add"},
+                      "이음새 가운데만 · 합성 마스크")
+    api["85"]["inputs"]["mask"] = ["908", 0]
     return True
 
 
@@ -228,78 +330,6 @@ def seam_second_pass(api: dict, ids: dict, seed: int, band=192, feather=64, deno
     for k in ("105", "106"):
         api[k]["inputs"]["image"] = ["920", 0]
     api["107"]["inputs"]["destination"] = ["920", 0]
-    return True
-
-
-def outward_seam_feather(api: dict) -> bool:
-    """이음새 1차(101~104) · 2차(912/918/919) 합성 마스크: 띠 안은 100% 새 그림, 페더는 띠 바깥쪽에만."""
-    ok = False
-    if all(k in api for k in ("101", "102", "103", "104")):
-        bw = int(api["101"]["inputs"].get("width", 512))
-        bh = int(api["101"]["inputs"].get("height", 1024))
-        bx = int(api["102"]["inputs"].get("x", 768))
-        f = int(api["103"]["inputs"].get("left", 128))
-        api["930"] = node("SolidMask", {"value": 1.0, "width": bw + 2 * f, "height": bh}, "이음새 합성 띠 (바깥 페더 포함)")
-        api["103"]["inputs"].update(mask=["930", 0], left=f, right=f)
-        api["104"]["inputs"]["x"] = bx - f
-        ok = True
-    if all(k in api for k in ("912", "918", "919")):
-        bw = int(api["912"]["inputs"].get("width", 192))
-        bh = int(api["912"]["inputs"].get("height", 1024))
-        f = int(api["918"]["inputs"].get("left", 64))
-        x = int(api["919"]["inputs"].get("x", 0))
-        api["931"] = node("SolidMask", {"value": 1.0, "width": bw + 2 * f, "height": bh}, "이음새 2차 합성 띠 (바깥 페더 포함)")
-        api["918"]["inputs"].update(mask=["931", 0], left=f, right=f)
-        api["919"]["inputs"]["x"] = x - f
-        ok = True
-    return ok
-
-
-def soft_seam_noise_mask(api: dict, ratio: float = 0.25) -> bool:
-    """이음새 1차(82 ← 102) · 2차(914 ← 913) latent 노이즈 마스크: 띠 안은 1 그대로(초록이 남지 않게),
-    띠 바깥 e px 에서 1→0 으로 부드럽게. e = 합성 페더(103 · 918) × ratio (기본 1/4 → 2K 에서 32px · 16px). 0 이면 예전대로."""
-    if ratio <= 0:
-        return False
-    ok = False
-    for noise, band, place, feather, base in (("82", "101", "102", "103", 932), ("914", "912", "913", "918", 935)):
-        if not all(k in api for k in (noise, band, place, feather, "100")):
-            continue
-        bw = int(api[band]["inputs"].get("width", 512))
-        bh = int(api[band]["inputs"].get("height", 1024))
-        bx = int(api[place]["inputs"].get("x", 0))
-        e = max(1, int(round(int(api[feather]["inputs"].get("left", 64)) * ratio)))
-        e = min(e, bx)                                              # 캔버스 밖으로 나가지 않게
-        a, b, c = str(base), str(base + 1), str(base + 2)
-        api[a] = node("SolidMask", {"value": 1.0, "width": bw + 2 * e, "height": bh}, "이음새 노이즈 띠 (바깥 여유 포함)")
-        api[b] = node("FeatherMask", {"mask": [a, 0], "left": e, "top": 0, "right": e, "bottom": 0},
-                      "이음새 노이즈 · 띠 바깥만 부드럽게")
-        api[c] = node("MaskComposite", {"destination": ["100", 0], "source": [b, 0], "x": bx - e, "y": 0, "operation": "add"},
-                      "이음새 노이즈 마스크 (부드러운 경계)")
-        api[noise]["inputs"]["mask"] = [c, 0]
-        ok = True
-    return ok
-
-
-def strip_green_trigger(text: str) -> str:
-    """초록 띠 채우기 문장(SEAM_TRIGGER · "Fill the green spaces according to the image.") 을 앞에서 뺌."""
-    t = text.strip()
-    if t.startswith(SEAM_TRIGGER):
-        t = t[len(SEAM_TRIGGER):].strip()
-    head = "Fill the green spaces according to the image."
-    if t.startswith(head):
-        t = t[len(head):].strip()
-    return t or text
-
-
-def seam_second_prompt(api: dict, ids: dict) -> bool:
-    """이음새 2차(915 참조)에 초록 채우기 문장을 뺀 이음새 프롬프트를 따로 인코드해 줌 (2차 입력엔 초록이 없음)."""
-    seam_pos = str(ids.get("seam_positive"))
-    if "915" not in api or seam_pos not in api:
-        return False
-    inp = api[seam_pos]["inputs"]
-    api["938"] = node("CLIPTextEncode", {"text": strip_green_trigger(inp.get("text", "")), "clip": inp["clip"]},
-                      "이음새 2차 · 프롬프트 (초록 채우기 문장 뺌)")
-    api["915"]["inputs"]["conditioning"] = ["938", 0]
     return True
 
 

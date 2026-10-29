@@ -12,11 +12,16 @@ from .. import llm
 OPENAI_URL = "https://api.openai.com/v1/responses"
 
 
-def image_data_url(img: Image.Image, max_side=1536):
+def image_data_url(img: Image.Image, max_side=1536, short_side=768, quality=85):
+    """LLM 에 보낼 그림: API(detail high)가 어차피 짧은 변 768 로 줄여 보므로 그 크기로 미리 줄여 보냄
+    → 화질(토큰 수) 같고 전송량만 줄어듦. 작은 그림은 그대로."""
     im = img.convert("RGB")
     im.thumbnail((max_side, max_side), Image.LANCZOS)
+    if min(im.size) > short_side:
+        s = short_side / min(im.size)
+        im = im.resize((round(im.width * s), round(im.height * s)), Image.LANCZOS)
     buf = io.BytesIO()
-    im.save(buf, "JPEG", quality=90)
+    im.save(buf, "JPEG", quality=quality)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 

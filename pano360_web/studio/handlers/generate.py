@@ -10,7 +10,7 @@ import uuid
 
 from PIL import Image
 
-from .. import erp, llm, workflow
+from .. import erp, llm, scene_rules, workflow
 from ..clients import comfy
 from .base import adir, jresp, now, placement_args, route_ids, serialized_run
 
@@ -87,17 +87,31 @@ class GenerateMixin:
         except Exception as e:
             return jresp({"error": str(e)}, 502)
 
-        hfov = meta["exif_hfov"] or round(float(a["hfov_estimate"]), 1)
-        placement = {
-            "yaw": self.cfg.get("default_yaw", -20),
-            "pitch": erp.pitch_from_horizon(a["horizon_y"], hfov, meta["width"], meta["height"]),
-            "hfov": hfov,
-            "vfov": None,
-            "hfov_source": "EXIF" if meta["exif_hfov"] else "LLM 추정",
-        }
-        prompts = llm.assemble(a)
-        meta.update(analysis=a, placement=placement, prompts=prompts, note=p.get("note", ""),
-                    usage=usage, model=model)
+        # LLM 결과는 먼저 저장 (뒤 계산이 실패해도 다시 호출·과금하지 않게)
+        meta.update(analysis=a, note=p.get("note", ""), usage=usage, model=model)
+        try:                                             # 파이썬 규칙 결정 (사람·주인공·주변 건물·이어지는 선) — 기록에 남김
+            a["rules"] = scene_rules.decide(a)
+            for w in a["rules"].get("why", []):
+                print(f"[pano360] 규칙 · {w}")
+        except Exception as e:
+            print(f"[pano360] 규칙 결정 실패 → 기본 규칙: {e}")
+        self.store.write(run_id, meta)
+        try:
+            est = float(a.get("hfov_estimate") or 70)
+            hfov = meta["exif_hfov"] or round(min(140.0, max(30.0, est)), 1)     # 엉뚱한 추정값(0·300°) 방지
+            hy = a.get("horizon_y")
+            hy = None if hy is None else min(1.0, max(0.0, float(hy)))
+            placement = {
+                "yaw": self.cfg.get("default_yaw", -20),
+                "pitch": erp.pitch_from_horizon(hy, hfov, meta["width"], meta["height"]),
+                "hfov": hfov,
+                "vfov": None,
+                "hfov_source": "EXIF" if meta["exif_hfov"] else "LLM 추정",
+            }
+            prompts = llm.assemble(a)
+        except Exception as e:
+            return jresp({"error": f"분석 결과를 프롬프트로 바꾸다 실패 (분석은 저장됨): {e}", "analysis": a}, 500)
+        meta.update(placement=placement, prompts=prompts)
         self.store.write(run_id, meta)
         return jresp({"analysis": a, "placement": placement, "prompts": prompts, "model": model, "usage": usage})
 
@@ -243,7 +257,13 @@ class GenerateMixin:
     def _settings(self, p, meta, positive=""):
         """화면 설정 + config 기본값 + 리파인(LoRA 없는 디테일 패스) 프롬프트."""
         st = dict(self.cfg.get("gen_defaults", {}))
-        st.update({k: v for k, v in (p.get("settings") or {}).items() if v is not None and v != ""})
+        user = {k: v for k, v in (p.get("settings") or {}).items() if v is not None and v != ""}
+        st.update(user)
+        # 좌우 가장자리가 다른 종류(물↔숲 등): 뒤쪽에서 둘을 잇는 곳을 새로 지어야 하므로 원통 패스를 더 세게
+        # (화면에서 직접 정한 값이 있으면 그대로)
+        rules_ = (meta.get("analysis") or {}).get("rules") or {}
+        if st.get("cylinder") and rules_.get("edges_differ") and "cylinder_denoise" not in user:
+            st["cylinder_denoise"] = float(st.get("cylinder_denoise_mixed", 0.72))
         rf = dict(self.cfg.get("refine", {}))
         if rf.get("enabled", False):
             rp = llm.refine_prompts(meta.get("analysis") or {}, positive)
@@ -430,7 +450,6 @@ class GenerateMixin:
                 await self._save_output(backend, df, self.store.path(run_id, adir(n, "debug_2k_after_seam.png")))
             except Exception as e:
                 print(f"[pano360] 진단 2K 저장 실패: {e}")
-        post = self.cfg.get("post", {})
         try:     # 좌우 이음새에 생긴 가는 세로선 지우기 (ComfyUI 결과에서 x=0 에 1~2px@2K 선이 나오는 경우)
             cols = await asyncio.to_thread(erp.fix_wrap_line, path)
             if cols:
@@ -438,19 +457,8 @@ class GenerateMixin:
                 print(f"[pano360] 이음새 세로선 지움: 열 {cols[0]}~{cols[-1]}")
             gap = await asyncio.to_thread(erp.match_wrap_tone, path)
             att["wrap_tone_gap"] = round(gap, 1)     # VR 에서 이음새 양쪽 밝기 차이가 띠처럼 보이지 않게
-            if post.get("wrap_blend", True):         # 굵은 선·점선·남은 단차: 이음새 띠째로 다중 대역으로 다시 이음
-                att["wrap_blend_px"] = await asyncio.to_thread(erp.blend_wrap_band, path, post.get("wrap_band", 0.012))
-            if post.get("wrap_sky", True):          # 이음새 근처 하늘의 큰 얼룩(복원 띠 톤 차이) → 매끈하게
-                att["wrap_sky"] = round(await asyncio.to_thread(erp.bridge_wrap_sky, path), 2)
         except Exception as e:
             print(f"[pano360] 이음새 선 처리 실패: {e}")
-        try:     # 이음새 연결 점검 (참고용 경고: 띠 색·뿌연 정도·결·양쪽 재질)
-            qa = await asyncio.to_thread(erp.continuity_report, path)
-            att["continuity"] = qa
-            for w in qa.get("warnings", []):
-                print(f"[pano360] 이음새 점검 경고: {w}")
-        except Exception as e:
-            print(f"[pano360] 이음새 점검 실패: {e}")
         try:
             att["seam"] = await asyncio.to_thread(erp.wrap_seam_score, path)
             print(f"[pano360] 좌우 이음새 {att['seam']}")

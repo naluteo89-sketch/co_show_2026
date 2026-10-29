@@ -3,12 +3,14 @@ LLM 지시문 · 응답 스키마 · 프롬프트 조립 (HTTP 호출은 openai_
 최종 프롬프트는 검증된 고정 문구(LoRA 트리거, 조명 일관성, 공통 네거티브)와 합쳐서 만든다.
 """
 
+from . import scene_rules as rules
+
 # LoRA 트리거 문구 — 첫 패스 프롬프트는 반드시 이 문장으로 시작해야 함 (test.json 노트)
 TRIGGER = ("Fill the green spaces according to the image. Outpaint as a seamless 360 equirectangular "
            "panorama (2:1). Keep the horizon level. Match left and right edges.")
-LIGHT_TMPL = ("Same {lighting} as the photo all around: identical sun direction, exposure, "
-              "white balance and colors across the full 360 degrees; {lighting_detail}.")
-TAIL = "Photorealistic raw photo, natural contrast, true-to-life colors, fine natural detail."
+# 고정 문구도 '사진 설명' 처럼: 이 모델은 읽은 명사를 그대로 그리므로 photo·seam·band·camera·viewer 같은 말은 넣지 않음
+LIGHT_TMPL = "{Lighting} falls evenly everywhere; {lighting_detail}."
+TAIL = "Photorealistic, true-to-life colors, fine natural detail."
 
 NEG_COMMON = ("inconsistent lighting, different time of day, exposure mismatch, brightness gradient, color shift, "
               "color cast, green tint, desaturated area, visible seams, mismatched lighting, repeated textures, "
@@ -16,10 +18,10 @@ NEG_COMMON = ("inconsistent lighting, different time of day, exposure mismatch, 
               "hard edges, text, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, "
               "black borders, broken horizon, duplicated objects, duplicate people, HDR look, oversharpened, oversaturated, "
               "overexposed sky, blown-out highlights, halos around edges, painterly texture, smeared ground, swirl at the bottom")
-SEAM_POS_TMPL = ("Fill the green spaces according to the image. Repair only the central vertical seam of this 360 equirectangular panorama. Seamlessly continue "
-                 "the {seam_elements} across the band. Match the brightness, white balance, color and {lighting_short} "
-                 "of both sides exactly; the band must not be darker or lighter than its neighbors. "
-                 "Photorealistic, no visible join.")
+# 이음새 복원: '세로 이음새·띠·경계' 를 말하면 그 선을 그림 → 이어지는 풍경만 설명 (트리거 문장은 유지)
+SEAM_POS_TMPL = ("Fill the green spaces according to the image. One continuous, evenly lit view of {seam_elements}, "
+                 "in the same {lighting_short}, with the same brightness and colors throughout. "
+                 "Photorealistic, fine natural detail.")
 SEAM_NEG_COMMON = ("inconsistent lighting, exposure mismatch, brightness gradient, color shift, color cast, green tint, "
                    "desaturated area, split screen, vertical dividing line, hard edge, mismatched horizon, text, watermark")
 
@@ -37,10 +39,37 @@ MODEL_FACTS = """GENERATOR FACTS (write for this model):
   photo and is invented almost entirely from the words. Typical failures when the words are vague: a second copy of
   the photo's main subject, roads/paths/railings/bridges that fork or stop, translucent overlapping trees or poles
   where two continuations meet, sand or beach ground, people.
-- What works: photo-caption sentences with concrete nouns, materials, colors, sizes and positions relative to the
-  viewer ("behind the viewer", "to the left", "along the horizon", "underfoot"), one idea per sentence, singular for
-  things that appear once, and an explicit statement of how every continuous line (road, path, railing, fence, wall,
-  shoreline, power line) runs on around the viewer.
+- What works: natural, flowing photo-caption sentences (not labels, lists or rules) with concrete nouns, materials,
+  colors and sizes, and plain position words ("behind", "on the far side", "to the left", "along the horizon",
+  "underfoot", "overhead"), one idea per sentence, singular for things that appear once, and an explicit statement of
+  how every continuous line (road, path, railing, fence, wall, shoreline, power line) runs on all around.
+- Words that get drawn by mistake: viewer, person, camera, photo, picture, image, frame, panorama, seam, band, line
+  (as a defect), edge of the image. Never use them in prompt text; say "behind" instead of "behind the viewer".
+"""
+
+# 360 구(sphere): 서 있는 한 점을 둘러싼 공을 펼친 것 — 가로는 한 바퀴(좌우 가장자리는 뒤에서 만남),
+# 위 끝은 머리 위 한 점, 아래 끝은 발밑 한 점 (모든 방향의 하늘·바닥이 거기서 만남)
+SPHERE_FACTS = """THE 360 SPHERE (how one photo becomes a full sphere around one standing point):
+- The canvas is a sphere unrolled flat. Left to right is one full turn around; the top edge is the single point
+  straight overhead and the bottom edge is the single point straight underfoot. The photo is one window at the
+  front, at eye level; everything else on the sphere comes from your words.
+- Around the horizon the sphere is a closed ring: turning right from the photo's right border you pass the right
+  side, then the far side behind, then the left side, and arrive back at the photo's left border. There is no start
+  and no end, and nothing appears twice.
+- So what the photo shows at its right border and what it shows at its left border meet behind. When they differ
+  (e.g. dense pines on the right, a seaside walkway on the left), the far side is one believable place that changes
+  gradually from one into the other, the way the real place most likely does (e.g. the pines thin out down a rocky
+  slope to the shore of the same calm bay). If nothing connects them, the generator paints both until they collide
+  and overlap as translucent ghosts.
+- Every continuous line either runs on and meets itself around the sphere, or ends naturally at something real
+  (a road curves away inland behind the trees, a railing ends where the walkway meets the road).
+- Overhead, the sky of every side closes into one dome: the same sky color, clouds and brightness continue over the
+  top from all directions. Underfoot, the ground of every side closes into one surface: the same material the person
+  stands on spreads evenly all around.
+- Upright things (towers, trees, poles, walls) stand straight up toward the point overhead; the horizon stays level
+  all the way around.
+- The main subject stands only at the front. Behind is the part farthest from the photo and is built only from the
+  kinds of things at the two borders, the ground and the sky.
 """
 
 SYSTEM = """You write prompts for a FLUX.2 Klein + 360-ERP-outpaint LoRA pipeline.
@@ -48,7 +77,7 @@ The user's single photo is pasted onto a 2:1 equirectangular canvas; everything 
 sky and ground) is generated from your words, so everything you write must already describe exactly the right
 world, in the photo's own mood.
 
-""" + MODEL_FACTS + """
+""" + MODEL_FACTS + "\n" + SPHERE_FACTS + """
 Work in two steps.
 
 STEP 1 - "observed": read the photo carefully and record only what you can actually see.
@@ -78,31 +107,40 @@ STEP 1 - "observed": read the photo carefully and record only what you can actua
 - absent: 3-8 things that are NOT in the photo and a generator might wrongly add here
   (e.g. "people", "second pavilion", "extra bridge", "beach sand", "boats", "buildings on the shore").
 
+""" + rules.FACTS_GUIDE + """
 STEP 2 - prompt fields, written from STEP 1 only:
-- scene: 30-60 words. The place and the main subject exactly as in the photo, with its real materials, colors and
+- scene: 30-60 words, natural flowing sentences. The place and the main subject as they look, with real materials, colors and
   details. Name the place only if clearly identifiable. Refer to things that appear once in the singular
   ("a pavilion", never "pavilions"). Never mention people, visitors, crowds or activities: the generated
   world must stay empty of people (people already in the photo stay as they are).
-- surroundings: 30-55 words, a plain description (not instructions like "extend" or "continue the"). What is to the
-  left, right and behind the viewer at a distance: the left_edge / right_edge things (trees, walls, fences, buildings,
+- surroundings: 30-55 words, natural flowing sentences (not instructions like "extend" or "continue the"). What is
+  to the left and to the right, at a distance (behind is the next field): the left_edge / right_edge things (trees, walls, fences, buildings,
   water, hills ...) continued with the same kind, size and spacing as in the photo, so the world feels full, not empty.
   For every continuous line in the photo (road, path, railing, fence, wall, shoreline, power line, bridge deck),
-  say in one plain sentence how it runs on around and behind the viewer as a person would expect (one road that
+  say in one plain sentence how it runs on all around and behind as a person would expect (one road that
   curves on, a railing that follows the walkway, a shoreline that closes the bay ...). Do not describe the ground or things lying on it here (that is ground_below), and no extra branches, bushes or
   grass in the foreground. Never add a second main subject, new buildings, extra bridges or structures that the
   edges do not suggest.
-- ground_below: 6-12 words: viewer_standing_on, its color and how plain it is, exactly like the ground in the
+- behind: 20-40 words, natural flowing sentences about the far side, following THE 360 SPHERE: start from what the
+  right border shows, then say how it gradually turns into what the left border shows, naming the plausible place in
+  between (a slope, a shore, open ground, the far end of the same bay ...). Only kinds of things from the two borders,
+  the ground and the sky; never the main subject, people or new structures. If both borders show the same kind of
+  thing, say simply how it continues all around behind.
+- ground_below: 6-12 words, a noun phrase: viewer_standing_on, its color and how plain it is, exactly like the ground in the
   photo's foreground (e.g. "a packed-earth courtyard, dry beige and mostly bare"). Do not list litter (needles,
   twigs, branches, leaves, pebbles) unless it clearly covers the photo's ground. No camera, tripod, feet, shadows
   or viewing-angle words.
-- sky_above: 6-15 words, what is directly overhead. Same weather as the photo.
+- sky_above: 6-15 words, what is directly overhead, where the sky of every side meets (THE 360 SPHERE): one even
+  continuation of the photo's sky. Same weather as the photo.
 - lighting: short phrase that matches the photo, e.g. "clear autumn afternoon sunlight".
 - lighting_detail: 4-10 words, a lowercase phrase without a final period.
 - lighting_short: 1-3 words used in the seam prompt.
 - lighting_negatives: lighting conditions that must NOT appear (the opposite times of day / weather).
 - content_negatives: 6-12 failure modes specific to THIS scene (e.g. "second pavilion", "extra lake crossing",
   "people on the bridge", "warped railing").
-- seam_elements: comma-separated 4-8 continuous background elements behind the viewer (from the edges, ground, sky),
+- seam_elements: 4-8 continuous background elements behind, in ring order from the right side to the left side,
+  joined into one natural phrase with commas and "and"
+  (e.g. "calm blue-green water, low wooded islands and a pale blue sky"), from the edges, ground and sky,
   never the main subject.
 - horizon_y: where the true horizon (eye level) sits in the photo, 0=top edge, 1=bottom edge; null if not visible.
 - hfov_estimate: horizontal field of view in degrees of the photo (phone main camera ~ 65-75, ultra-wide ~ 100-120).
@@ -143,8 +181,10 @@ SCHEMA = {
     "additionalProperties": False,
     "properties": {
         "observed": _OBSERVED,                       # 먼저 관찰 (응답이 이 순서로 채워짐)
+        "facts": rules.FACTS_SCHEMA,                 # 규칙용 작은 사실 (결론은 scene_rules 가 정함)
         "scene": {"type": "string"},
         "surroundings": {"type": "string"},
+        "behind": {"type": "string"},
         "ground_below": {"type": "string"},
         "sky_above": {"type": "string"},
         "lighting": {"type": "string"},
@@ -158,7 +198,7 @@ SCHEMA = {
         "summary_ko": {"type": "string"},
         "tips_ko": {"type": "string"},
     },
-    "required": ["observed", "scene", "surroundings", "ground_below", "sky_above", "lighting", "lighting_detail",
+    "required": ["observed", "facts", "scene", "surroundings", "behind", "ground_below", "sky_above", "lighting", "lighting_detail",
                  "lighting_short", "lighting_negatives", "content_negatives", "seam_elements", "horizon_y",
                  "hfov_estimate", "summary_ko", "tips_ko"],
 }
@@ -181,25 +221,64 @@ _BANNED = r"\b(cinematic|dramatic|epic|8k|4k|hdr|fisheye|wide[- ]angle|bokeh|len
 _HAZE_ADJ = r"\b(hazy|misty|foggy|smoky)\s*"
 _HAZE_NOUN = r"\b(haze|mist|fog|smog)\b"
 _PEOPLE = r"\b(people|persons?|pedestrians|visitors?|tourists?|crowds?|walkers?|couples?|families|children|hikers?|strollers?)\b"
+# '보는 사람·사진' 을 가리키는 말 → 위치 말만 남김 (그대로 두면 사람·액자·포스터를 그림)
+_META = [
+    (r"\b(directly\s+)?behind\s+the\s+(viewer|camera|observer|photographer)('s)?(\s+(back|position))?", "behind"),
+    (r"\b(all\s+)?around\s+the\s+(viewer|camera|observer|photographer)\b", "all around"),
+    (r"\bin\s+front\s+of\s+the\s+(viewer|camera|observer|photographer)\b", "ahead"),
+    (r"\b(to(wards?)?|near|beside|next\s+to)\s+the\s+(viewer|camera|observer|photographer)\b", "close by"),
+    (r"\b(the\s+)?(viewer|camera|observer|photographer)'s\s+(left|right)\b", r"the \3"),
+    (r",?\s*\b(exactly\s+|just\s+)?(as|like)\s+(seen\s+)?in\s+the\s+(photo|photograph|picture|image|reference)\b", ""),
+    (r",?\s*\bin\s+the\s+(photo|photograph|picture|image)\b", ""),
+    (r"\bthe\s+(photo|photograph|picture|image)'s\b", "the"),
+]
 
 
 def _clean(t: str, max_words: int | None = None) -> str:
-    """LLM 문장 다듬기: 금지 표현 제거 · 빈자리 정리 · 길이 제한."""
+    """LLM 문장 다듬기: 금지 표현·보는 사람/사진 가리키는 말 제거 · 빈자리 정리 · 길이 제한."""
     t = _re.sub(_BANNED, "", t or "", flags=_re.I)
+    for pat, rpl in _META:
+        t = _re.sub(pat, rpl, t, flags=_re.I)
     t = _re.sub(r"\s{2,}", " ", t)
-    t = _re.sub(r"\b(with|and|of|in|by)\s+(?=(and|with|of|in|by)\b|[,.;]|$)", "", t, flags=_re.I)
-    t = _re.sub(r"\s{2,}", " ", t)
+    for _ in range(3):                                   # 금지어를 뺀 뒤 남은 '끊긴 전치사'만 정리 (문장 안 전치사는 그대로)
+        t2 = _re.sub(r"\b(with|and|of|in|by)\s+(?=(and|with|of|in|by)\b)", "", t, flags=_re.I)
+        t2 = _re.sub(r"\s*\b(with|and|of|in|by)\s*(?=[,.;]|$)", "", t2, flags=_re.I)
+        t2 = _re.sub(r"\s{2,}", " ", t2)
+        if t2 == t:
+            break
+        t = t2
     t = _re.sub(r"\s+([,.;])", r"\1", t).strip(" ,;")
-    if max_words:
-        w = t.split()
-        if len(w) > max_words:
-            t = " ".join(w[:max_words]).rstrip(",;") + "."
+    t = _re.sub(r"([,.;])\1+", r"\1", t)
+    t = _re.sub(r"[,;]+\s*\.", ".", t)
+    if max_words and len(t.split()) > max_words:
+        t = _cut(t, max_words)
     return t
 
 
+def _cut(t: str, max_words: int) -> str:
+    """길이 제한: 문장 중간을 자르지 않음 — 제한 안의 마지막 문장 끝(.), 없으면 마지막 쉼표, 그래도 없으면 단어."""
+    w = t.split()
+    head = " ".join(w[:max_words])
+    for sep in (".", ";", ","):
+        i = head.rfind(sep)
+        if i >= len(head) // 2:
+            return head[:i].rstrip(" ,;") + "."
+    return head.rstrip(",;") + "."
+
+
 def _sentence(t: str) -> str:
-    t = t.strip()
-    return (t if t.endswith((".", "!", "?")) else t + ".") if t else ""
+    """문장 끝 마침표 + 첫 글자 대문자 (구절을 지운 뒤 소문자로 시작하는 경우)."""
+    t = t.strip(" ,;")
+    if not t:
+        return ""
+    t = t[:1].upper() + t[1:]
+    return t if t.endswith((".", "!", "?")) else t + "."
+
+
+def _phrase(t: str) -> str:
+    """문장 중간에 들어갈 구절: 끝 마침표 빼고 첫 글자 소문자 (고유명사는 LLM 이 앞에 두지 않게 요청)."""
+    t = (t or "").strip().rstrip(" .;,")
+    return t[:1].lower() + t[1:] if t[:2] != t[:2].upper() else t
 
 
 def _people(o: dict) -> str:
@@ -214,7 +293,8 @@ def _prep(a: dict) -> dict:
     """LLM 해석을 프롬프트용으로 가공: 관찰(observed)에 맞지 않는 말 지우기(안개·사람) + 길이 제한."""
     a = dict(a)
     o = a.get("observed") or {}
-    lim = {"scene": 55, "surroundings": 60, "ground_below": 14, "sky_above": 14, "lighting": 12, "lighting_detail": 12,
+    # 안전 상한만 (LLM 에 요청한 길이보다 넉넉히 — LLM 답이 잘리지 않고 그대로 들어가게)
+    lim = {"scene": 75, "surroundings": 70, "behind": 50, "ground_below": 18, "sky_above": 20, "lighting": 14, "lighting_detail": 14,
            "lighting_short": 4, "seam_elements": 30}
     for k, n in lim.items():
         if k in a:
@@ -222,10 +302,40 @@ def _prep(a: dict) -> dict:
             if o and not o.get("haze_present", False):
                 t = _re.sub(_HAZE_ADJ, "", t, flags=_re.I)
                 t = _re.sub(_HAZE_NOUN, "clouds" if k == "sky_above" else "light", t, flags=_re.I)
-            if o and k in ("scene", "surroundings", "seam_elements"):   # 생성 영역엔 사람 안 그림 (사진 속 사람은 사진 픽셀로 남음)
+            if o and k in ("scene", "surroundings", "behind", "seam_elements"):   # 생성 영역엔 사람 안 그림 (사진 속 사람은 사진 픽셀로 남음)
                 # 사람이 나오는 구절(쉼표 단위)을 통째로 뺌 — "visitors strolling" 같은 말이 남지 않게
-                t = ", ".join(f for f in _re.split(r",\s*", t) if not _re.search(_PEOPLE, f, flags=_re.I))
+                sents = []
+                for sen in _re.split(r"(?<=[.!?])\s+", t):
+                    frags = [f for f in _re.split(r",\s*", sen) if not _re.search(_PEOPLE, f, flags=_re.I)]
+                    if frags:
+                        sents.append(_sentence(", ".join(frags)))
+                t = " ".join(sents)
             a[k] = _clean(t, n)
+    # 파이썬 규칙(scene_rules): 사진에 근거 없는 주변 건물 문장 빼기 · 물 위가 아닌데 물인 발밑 바로잡기
+    d = a.get("rules") or rules.decide(a)
+    a["rules"] = d
+    f = a.get("facts") or {}
+    if f and a.get("surroundings"):
+        e = f.get("edges") or {}
+        edges_text = " ".join([(e.get(k) or {}).get("what", "") for k in ("left", "right")] +
+                              [o.get("left_edge", ""), o.get("right_edge", ""), o.get("place_type", "")])
+        a["surroundings"] = rules.filter_built(a["surroundings"], a.get("scene", ""), edges_text) or a["surroundings"]
+    if a.get("behind"):                                   # 뒤쪽: 근거 없는 건물·주인공 이름이 든 문장은 뺌 (두 번째 주인공 방지)
+        e = f.get("edges") or {}
+        edges_text = " ".join([(e.get(k) or {}).get("what", "") for k in ("left", "right")] +
+                              [o.get("left_edge", ""), o.get("right_edge", "")])
+        t = rules.filter_built(a["behind"], "", edges_text) if f else a["behind"]
+        head = _re.split(r"\s+(on|in|at|by|with|of|over|near|beside|along)\s+", (o.get("main_subject") or "").lower())[0]
+        subj = head.split()                               # "wooden pavilion on the bridge" → pavilion
+        noun = subj[-1] if subj and subj[-1] not in ("none", "n/a") else ""
+        noun = noun[:-1] if noun.endswith("s") and not noun.endswith("ss") else noun
+        if noun and len(noun) > 2:
+            t = " ".join(x for x in _re.split(r"(?<=[.!?])\s+", t) if not _re.search(rf"\b{_re.escape(noun)}s?\b", x, _re.I))
+        a["behind"] = t.strip()
+    if not a.get("behind"):                               # 예전 분석·다 빠졌을 때: 좌우 가장자리 사실로 한 문장
+        a["behind"] = _clean(rules.behind_fallback(a), 50)
+    if d.get("ground_fix"):
+        a["ground_below"] = d["ground_fix"]
     for k in ("lighting", "lighting_detail", "lighting_short"):   # 템플릿 문장 중간에 들어감: 끝 마침표 없음
         if a.get(k):
             a[k] = a[k].rstrip(" .,;")
@@ -235,19 +345,22 @@ def _prep(a: dict) -> dict:
     return a
 
 
-def _constraints(a: dict) -> str:
+def _constraints(a: dict, with_subject: bool = True) -> str:
     """증류 모델(CFG 1)은 네거티브를 안 보므로, 꼭 지켜야 할 것을 Positive 문장으로 (관찰 기반, 사진마다 자동)."""
     o = a.get("observed") or {}
     if not o:
         return ""
     out = []
+    d = a.get("rules") or rules.decide(a)
     subj = _clean(o.get("main_subject") or "", 6)
     n = o.get("main_subject_count")
-    structure = o.get("subject_is_structure", True)       # 예전 분석은 필드 없음 → 기존처럼 적용
-    if structure and subj and subj.lower() not in ("none", "n/a") and isinstance(n, int) and n >= 1:
+    if with_subject and d.get("subject_unique") and subj and subj.lower() not in ("none", "n/a") and isinstance(n, int) and n >= 1:
         num = {1: "only one", 2: "only two", 3: "only three"}.get(n, f"only {n}")
-        out.append(f"There is {num} {subj}, where it is in the photo, and no other similar structure")
-    out.append("The whole place is quiet and deserted")   # 사람 수와 관계없이 항상 ('people' 단어는 넣으면 오히려 그림)
+        out.append(f"There is {num} {subj} here")   # 'structure'·'photo' 같은 명사를 덧붙이면 오히려 그림
+    if d.get("people") == "few_far":                # 규칙: 사진에 사람이 보이고 붐비는 곳일 때만
+        out.append("Only a few small figures appear far in the distance")
+    else:                                            # 기본 ('people' 단어는 넣으면 오히려 그림)
+        out.append("The place is quiet and deserted")
     if not o.get("haze_present", False):
         out.append("The air is clear")
     return " ".join(_sentence(x) for x in out)
@@ -282,32 +395,45 @@ def assemble(a: dict) -> dict:
     트리거 → 장면(주인공) → 주변·뒤 → 발밑 → 머리 위 → 분위기·빛 → 꼭 지킬 것 → 화질."""
     a = _prep(a)
     o = a.get("observed") or {}
+    # 'All around:' 'Mood:' 같은 표제어 대신 이어지는 설명문 (표제어·목록체는 모델이 장면을 딱딱하게 나눠 그림)
     parts = [TRIGGER, _sentence(a["scene"])]
     if a.get("surroundings"):
-        parts.append(_sentence("All around: " + a["surroundings"]))
+        parts.append(_sentence(a["surroundings"]))
+    behind = _sentence(a["behind"]) if a.get("behind") else ""
+    if behind:                                             # 좌우가 뒤에서 어떻게 만나는지 (원통 한 바퀴 순서)
+        parts.append(behind)
+    ls = rules.line_sentences(a.get("rules") or {}, " ".join([a.get("surroundings", ""), behind]))
+    if ls:                                                 # 도로·난간·해안선 등이 어떻게 이어지는지 (규칙으로 만든 문장)
+        parts.append(ls)
+    common = []                                            # 발밑·머리 위·분위기·빛 (본·뒤쪽 프롬프트 공통)
     if a.get("ground_below"):                              # 서 있는 곳 (물 위에 뜬 시점 방지 — viewer_standing_on 으로 시작)
-        g = a["ground_below"].rstrip(" .")
         # 'not X' 는 넣지 않음: 증류 모델(CFG 1)은 부정을 못 알아듣고 X(예: beach sand)를 오히려 그림 → X 는 네거티브에만
-        parts.append(_sentence("The viewer stands on " + g[:1].lower() + g[1:]))
+        common.append(_sentence("Underfoot is " + _phrase(a["ground_below"])))
     if a.get("sky_above"):
-        parts.append(_sentence("Overhead: " + a["sky_above"]))
+        common.append(_sentence("Overhead is " + _phrase(a["sky_above"])))
     if o.get("atmosphere"):
-        parts.append(_sentence("Mood: " + _clean(o["atmosphere"], 8)))
-    parts.append(LIGHT_TMPL.format(lighting=a["lighting"].strip(), lighting_detail=a["lighting_detail"].strip())
-                 if a.get("lighting_detail") else
-                 _sentence(LIGHT_TMPL.split(";")[0].format(lighting=a["lighting"].strip())))
+        common.append(_sentence("The atmosphere is " + _phrase(_clean(o["atmosphere"], 8))))
+    light = _phrase(a["lighting"]) or "natural daylight"
+    lt = LIGHT_TMPL.replace("{Lighting}", light[:1].upper() + light[1:])
+    common.append(lt.format(lighting_detail=_phrase(a["lighting_detail"])) if a.get("lighting_detail")
+                  else _sentence(lt.split(";")[0]))
+    parts += common
     c = _constraints(a)
     if c:
         parts.append(c)
     parts.append(TAIL)
     positive = " ".join(p for p in parts if p)
+    # 원통 패스(0°/360° 가 가운데)용: 뒤쪽만 — 장면·주인공 문장 없이 (뒤에 두 번째 주인공이 생기지 않게)
+    back_positive = ""
+    if behind:
+        back_positive = " ".join(x for x in [TRIGGER, behind, ls, *common, _constraints(a, with_subject=False), TAIL] if x)
     guards = _guard_negatives(a)
     negative = _join([", ".join(a["lighting_negatives"]), NEG_COMMON, ", ".join(a["content_negatives"]), guards])
-    seam_positive = SEAM_POS_TMPL.format(seam_elements=a["seam_elements"].strip(),
-                                         lighting_short=a["lighting_short"].strip())
+    seam_positive = SEAM_POS_TMPL.format(seam_elements=_phrase(a["seam_elements"]),
+                                         lighting_short=_phrase(a["lighting_short"]) or "light")
     seam_negative = _join([", ".join(a["lighting_negatives"]), SEAM_NEG_COMMON, guards])
     return {"positive": positive, "negative": negative,
-            "seam_positive": seam_positive, "seam_negative": seam_negative}
+            "seam_positive": seam_positive, "seam_negative": seam_negative, "back_positive": back_positive}
 
 
 # ----------------------------------------------------------------------------- 2K 초안 검수 (업스케일 전)
@@ -334,10 +460,10 @@ summary_ko (one Korean sentence for the operator).
 fix_hint is added to the prompt of the next draft ("" if ok), right after the description of the surroundings.
 Follow the generator facts below and write it as a plain description of what IS there, like a photo caption:
 - 1-2 short declarative sentences, at most 45 words, most important thing first.
-- Only physical things that should be visible, with their material, color, size and where they are relative to the
-  viewer ("behind the viewer", "to the left", "along the horizon", "underfoot").
-- Describe how lines continue in space: e.g. "Behind the viewer the concrete walkway runs straight on toward a low
-  wooded island, lined on both sides by gray posts with four pale cables."
+- Only physical things that should be visible, with their material, color, size and plain position words
+  ("behind", "to the left", "along the horizon", "underfoot").
+- Describe how lines continue in space: e.g. "Behind, the concrete walkway runs straight on toward a low wooded
+  island, lined on both sides by gray posts with four pale cables."
 - Never name the defect or what must disappear (no "seam", "line", "ghost", "transparent", "duplicate", "no",
   "without", "remove", "avoid", "instead"); never use verbs that give orders ("make", "extend", "fix", "ensure").
 - No camera, lens, style or quality words; no people.
@@ -376,7 +502,7 @@ def with_fix_hints(prompts: dict, hints) -> dict:
     if not add:
         return dict(prompts)
     pos = prompts.get("positive", "")
-    for anchor in ("The viewer stands on", "Overhead:", TAIL):
+    for anchor in ("Underfoot is", "Overhead is", TAIL):
         if anchor in pos:
             pos = pos.replace(anchor, add + " " + anchor, 1)
             break
@@ -385,32 +511,32 @@ def with_fix_hints(prompts: dict, hints) -> dict:
     return {**prompts, "positive": pos}
 
 
-POLE_POS_TMPL = ("Repair only the two round patches of this rotated 360 panorama: on the left the ground directly beneath "
-                 "the camera seen from straight above ({ground}); on the right the sky directly overhead ({sky}). "
-                 "Continue the surrounding textures and colors seamlessly with even, natural detail and the same "
-                 "{lighting_short}. No swirl, no stretching, no radial streaks. Photorealistic.")
+# 극점: 'patch·camera·swirl·streak' 같은 말은 그려짐 → 보이는 것만 설명
+POLE_POS_TMPL = ("On the left, {ground}, seen from straight above, with the same texture and colors as around it. "
+                 "On the right, {sky}, seen straight up, matching the surrounding sky. Even, natural detail in the same "
+                 "{lighting_short}. Photorealistic.")
 POLE_NEG = ("swirl, vortex, radial blur, stretched texture, smeared ground, pinched center, tripod, camera, photographer, "
             "feet, shoes, shadow of a person, hole, black spot, logo, text, watermark, visible circle edge, seam, "
             "duplicated objects, buildings, trees growing sideways, oversharpened, HDR look")
 
 
 def pole_prompts(a: dict) -> dict:
-    ground = (a.get("ground_below") or "natural ground matching the surrounding area").strip()
-    sky = (a.get("sky_above") or "sky matching the surrounding sky").strip()
-    pos = POLE_POS_TMPL.format(ground=ground, sky=sky, lighting_short=(a.get("lighting_short") or "daylight").strip())
+    ground = _phrase(_clean(a.get("ground_below") or "")) or "natural ground matching the surroundings"
+    sky = _phrase(_clean(a.get("sky_above") or "")) or "open sky matching the surroundings"
+    pos = POLE_POS_TMPL.format(ground=ground, sky=sky, lighting_short=_phrase(a.get("lighting_short")) or "daylight")
     neg = _join([", ".join(a.get("lighting_negatives") or []), POLE_NEG])
     return {"positive": pos, "negative": neg}
 
 
-REFINE_TMPL = ("A high-resolution photograph. {scene} Natural fine detail, realistic textures of stone, wood, "
-               "foliage and water, crisp but not oversharpened, true-to-life colors, natural contrast.")
+# 리파인: 재질 목록(stone, wood, water ...)을 늘어놓으면 없는 곳에도 그 재질을 그림 → 장면 + 일반 화질 말만
+REFINE_TMPL = "{scene} Sharp, natural fine detail and realistic textures, true-to-life colors, natural contrast."
 REFINE_NEG = ("painting, illustration, cartoon, anime, digital art, CGI, 3d render, watercolor, flat colors, "
               "posterized, smooth plastic texture, oversharpened, halos, HDR look, oversaturated, blurry, "
               "text, watermark")
 
 
 def refine_prompts(a: dict, fallback_positive: str = "") -> dict:
-    scene = (a.get("scene") or "").strip()
+    scene = _sentence(_clean(a.get("scene") or ""))
     if not scene and fallback_positive:
         scene = fallback_positive.replace(TRIGGER, "").strip()
     return {"positive": REFINE_TMPL.format(scene=scene), "negative": REFINE_NEG}

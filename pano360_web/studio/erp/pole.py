@@ -45,14 +45,3 @@ def pole_merge(erp_img: Image.Image, repaired_rot: Image.Image, nadir_cap=28, ze
     lat = np.degrees(np.arcsin(np.clip(y, -1, 1)))
     w = pole_cap_weight(lat, nadir_cap, zenith_cap, feather)[..., None]
     return to_image(src * (1 - w) + back * w)
-
-
-def _flat_weight(rows):
-    """무늬 없는 곳(하늘 등) 1, 무늬 있는 곳(지붕·가지·바닥 돌) 0."""
-    import cv2
-    W = rows.shape[1]
-    g = cv2.cvtColor(np.clip(rows, 0, 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32)
-    e = cv2.GaussianBlur(np.abs(g - cv2.GaussianBlur(g, (0, 0), 3)), (0, 0), max(2.0, W / 330))
-    t = smooth((6.0 - e) / 4.0).astype(np.float32)
-    k = max(3, int(W / 264) | 1)
-    return cv2.erode(t, np.ones((k, k), np.uint8))
