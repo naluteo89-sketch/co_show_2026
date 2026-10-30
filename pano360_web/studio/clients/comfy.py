@@ -295,6 +295,12 @@ class _Base:
                 node["inputs"]["cfg"] = float(prof.get("cfg", 1.0))
                 partial = float(node["inputs"].get("denoise", 1)) < 0.99   # 이음새·리파인처럼 일부만 다시 그리는 샘플러
                 node["inputs"]["steps"] = int(prof.get("partial_steps", 8) if partial else prof.get("steps", 4))
+            elif node["class_type"] == "KSamplerAdvanced" and node.get("_meta", {}).get("rot"):
+                # 회전 디노이즈 조각: 전체 스텝을 증류 스텝으로 바꾸고 조각 구간을 다시 나눔
+                k, n = node["_meta"]["rot"]
+                steps = int(prof.get("steps", 4))
+                node["inputs"].update(cfg=float(prof.get("cfg", 1.0)), steps=steps,
+                                      start_at_step=round(k * steps / n), end_at_step=round((k + 1) * steps / n))
         print(f"[api] ⚠ 증류 모델 '{swapped[0][3]}' 사용 → 샘플러를 CFG {prof.get('cfg', 1.0)}, "
               f"{prof.get('steps', 6)}스텝으로 맞춤. 가장 좋은 결과는 서버에 base 모델을 넣는 거예요.")
         self.last_profile = "distilled"

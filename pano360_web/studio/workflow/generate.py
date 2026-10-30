@@ -56,7 +56,10 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
         # → 0°/360° 가 캔버스 안쪽에서 양쪽을 보며 한 장으로 그려짐 (초록 띠·섞기·2차 패스 없음)
         cylinder_pass(api, ids, s1, denoise=float(st.get("cylinder_denoise", 0.6)),
                       keep=float(st.get("cylinder_keep", 0.5)), feather=int(st.get("cylinder_feather", 128)),
-                      back_text=prompts.get("back_positive") or "")
+                      back_text=prompts.get("back_positive") or "", pick=bool(st.get("cylinder_pick", True)))
+        # 1차 생성 회전 디노이즈: 스텝마다 가로로 돌려 양 끝(0°/360°) 오차가 한 자리에 쌓이지 않게 (PanoWan RSD)
+        if int(st.get("rotate_chunks", 0) or 0) > 1 and not keep_mask:
+            rotated_first_pass(api, ids, s1, int(st["rotate_chunks"]))
         rf = st.get("refine")
         if rf and rf.get("enabled", True):
             attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts)
@@ -200,8 +203,144 @@ def _roll_half(api: dict, src: list, W: int, H: int, base: int, title: str) -> l
     return [d, 0]
 
 
+LAT = 16   # FLUX.2 latent 1칸 = 16px (ComfyUI Flux2 VAE: 128채널 · 1/16)
+
+
+def _latent_roll(api: dict, src: list, Wl: int, Hl: int, q: int, base: int, title: str) -> list:
+    """latent 를 왼쪽으로 q칸 돌림 (out[0:W-q] = in[q:W], out[W-q:W] = in[0:q]). 결과 [id, 0].
+    ComfyUI LatentCrop/LatentComposite 는 좌표를 '//8' 로 latent 칸으로 바꾸므로(1/8 VAE 기준),
+    1/16 인 Flux2 에서는 칸 수 × 8 을 넘김."""
+    a, b, c, d = (str(base + i) for i in range(4))
+    api[a] = node("LatentCrop", {"samples": src, "width": (Wl - q) * 8, "height": Hl * 8, "x": q * 8, "y": 0},
+                  f"{title} · 뒤쪽 (q칸 이후)")
+    api[b] = node("LatentCrop", {"samples": src, "width": q * 8, "height": Hl * 8, "x": 0, "y": 0},
+                  f"{title} · 앞쪽 q칸")
+    api[c] = node("LatentComposite", {"samples_to": src, "samples_from": [a, 0], "x": 0, "y": 0, "feather": 0},
+                  f"{title} · 앞으로")
+    api[d] = node("LatentComposite", {"samples_to": [c, 0], "samples_from": [b, 0], "x": (Wl - q) * 8, "y": 0,
+                                      "feather": 0}, f"{title} · 끝으로")
+    return [d, 0]
+
+
+def _roll(api: dict, src: list, W: int, H: int, s: int, base: int, title: str) -> list:
+    """그림을 왼쪽으로 s px 돌림 (latent 돌림과 같은 방향). 결과 [id, 0]."""
+    a, b, c, d = (str(base + i) for i in range(4))
+    api[a] = node("ImageCrop", {"image": src, "width": W - s, "height": H, "x": s, "y": 0}, f"{title} · 뒤쪽")
+    api[b] = node("ImageCrop", {"image": src, "width": s, "height": H, "x": 0, "y": 0}, f"{title} · 앞쪽")
+    api[c] = node("ImageCompositeMasked", {"destination": src, "source": [a, 0], "x": 0, "y": 0, "resize_source": False},
+                  f"{title} · 앞으로")
+    api[d] = node("ImageCompositeMasked", {"destination": [c, 0], "source": [b, 0], "x": W - s, "y": 0,
+                                           "resize_source": False}, f"{title} · 끝으로")
+    return [d, 0]
+
+
+def rotated_first_pass(api: dict, ids: dict, seed: int, chunks: int = 4) -> bool:
+    """1차 생성(31)을 chunks 조각으로 나눠, 조각마다 latent 를 가로로 W/chunks 씩 돌려 이어 그림 (회전 디노이즈).
+    - 모델은 캔버스 양 끝이 붙어 있는 걸 모름 → 한 자리(0°/360°)에서 스텝마다 오차가 쌓임. 돌리면 그 자리가 매번 달라져
+      오차가 한 곳에 몰리지 않고 구도도 양 끝을 이어서 잡힘. 참조(control)도 같은 만큼 돌린 것으로.
+    - 마지막 조각 뒤 한 번 더 돌리면 chunks × W/chunks = 한 바퀴 → 원래 방향. 노이즈는 첫 조각에서만(같은 시드).
+    - 스텝 나누기: KSamplerAdvanced(start/end). 증류 프로필(4스텝)은 clients/comfy 가 _meta.rot 으로 다시 나눔."""
+    main = str(ids["sampler_main"])
+    if main not in api or not all(k in api for k in ("8", "71", "100")):
+        return False
+    sm = api[main]["inputs"]
+    pos = sm.get("positive")
+    if not (isinstance(pos, list) and api.get(str(pos[0]), {}).get("class_type") == "ReferenceLatent"):
+        return False                                       # 참조 없는 그래프면 손대지 않음
+    text_cond = api[str(pos[0])]["inputs"]["conditioning"]
+    W = int(api["100"]["inputs"].get("width", 2048))
+    H = int(api["100"]["inputs"].get("height", 1024))
+    Wl, Hl = W // LAT, H // LAT
+    steps = int(sm.get("steps", 20))
+    chunks = max(2, min(int(chunks), steps))
+    if Wl % chunks:
+        return False
+    q = Wl // chunks
+    vae = [str(ids["vae"]), 0]
+    lat, base = sm["latent_image"], 1100
+    for k in range(chunks):
+        if k == 0:
+            cond = pos
+        else:                                              # 참조 control 도 k × W/chunks px 돌림
+            ctrl = _roll(api, ["71", 0], W, H, k * q * LAT, base, f"회전 {k} · control")
+            api[str(base + 4)] = node("VAEEncode", {"pixels": ctrl, "vae": vae}, f"회전 {k} · control 인코드")
+            api[str(base + 5)] = node("ReferenceLatent", {"conditioning": text_cond, "latent": [str(base + 4), 0]},
+                                      f"회전 {k} · 참조")
+            cond = [str(base + 5), 0]
+        sid = str(base + 6)
+        api[sid] = node("KSamplerAdvanced", {
+            "model": sm["model"], "add_noise": "enable" if k == 0 else "disable", "noise_seed": int(seed),
+            "steps": steps, "cfg": float(sm.get("cfg", 4.0)), "sampler_name": sm.get("sampler_name", "euler"),
+            "scheduler": sm.get("scheduler", "simple"), "positive": cond, "negative": sm["negative"],
+            "latent_image": lat, "start_at_step": round(k * steps / chunks), "end_at_step": round((k + 1) * steps / chunks),
+            "return_with_leftover_noise": "enable" if k < chunks - 1 else "disable"}, f"회전 디노이즈 {k + 1}/{chunks}")
+        api[sid]["_meta"]["rot"] = [k, chunks]
+        lat = _latent_roll(api, [sid, 0], Wl, Hl, q, base + 7, f"회전 {k} · latent 돌림")
+        base += 20
+    for n in api.values():                                 # 31 을 쓰던 곳(디코드 8) → 마지막 돌림 결과
+        for key, v in n.get("inputs", {}).items():
+            if v == [main, 0]:
+                n["inputs"][key] = lat
+    api.pop(main, None)
+    return True
+
+
+def _pick_mask(api: dict, new: list, old: list, W: int, H: int, x: int, kw: int, half: int) -> list:
+    """원통 합성 마스크 (1 = 새 그림, 0 = 1차 그림) — 투명도로 섞지 않고 '더 뚜렷한 쪽'을 통째로 고름.
+    - 기본: 가운데 kw 폭은 새 그림, 바깥은 1차 그림 (딱 나눔).
+    - 두 경계(x, x+kw) 양쪽 half px 구간 안에서만: 윤곽(Canny)이 많은 쪽 = 물체가 있는 쪽을 그 물체째 씀
+      (하늘 vs 나무 → 나무). 둘 다 밋밋한 곳(하늘·아스팔트)은 기본 나눔 그대로 — 차이가 거의 없어 안 보임.
+    - 마지막에 8px 정도만 부드럽게 (밋밋한 곳의 밝기 차이만 가림 · 물체가 반투명해질 폭이 아님).
+    ComfyUI 기본 노드만: Canny · ImageBlur · ImageToMask · MaskComposite · ThresholdMask · GrowMask · MaskToImage."""
+    i = iter(range(1015, 1060))
+    def nid():
+        return str(next(i))
+
+    def edges(img, title):                                 # 윤곽 밀도 지도 (0~1)
+        c, b, m = nid(), nid(), nid()
+        api[c] = node("Canny", {"image": img, "low_threshold": 0.2, "high_threshold": 0.5}, f"원통 고르기 · {title} 윤곽")
+        api[b] = node("ImageBlur", {"image": [c, 0], "blur_radius": 15, "sigma": 6.0}, f"원통 고르기 · {title} 윤곽 밀도")
+        api[m] = node("ImageToMask", {"image": [b, 0], "channel": "red"}, f"원통 고르기 · {title} 밀도 마스크")
+        return [m, 0]
+
+    def wins(a, b, title):                                 # a 가 b 보다 뚜렷한 곳 → 물체 전체가 덮이게 넓힘
+        d, t, g = nid(), nid(), nid()
+        api[d] = node("MaskComposite", {"destination": a, "source": b, "x": 0, "y": 0, "operation": "subtract"},
+                      f"원통 고르기 · {title} 차이")
+        api[t] = node("ThresholdMask", {"mask": [d, 0], "value": 0.06}, f"원통 고르기 · {title} 더 뚜렷한 곳")
+        api[g] = node("GrowMask", {"mask": [t, 0], "expand": 24, "tapered_corners": True}, f"원통 고르기 · {title} 물체째")
+        return [g, 0]
+
+    def zone_only(m, title):                               # 경계 구간 밖은 0
+        z0, z1, z2, z3 = nid(), nid(), nid(), nid()
+        api[z0] = node("SolidMask", {"value": 1.0, "width": 2 * half, "height": H}, f"원통 고르기 · 경계 구간 폭")
+        api[z1] = node("MaskComposite", {"destination": ["100", 0], "source": [z0, 0], "x": max(0, x - half), "y": 0,
+                                         "operation": "add"}, "원통 고르기 · 왼쪽 경계 구간")
+        api[z2] = node("MaskComposite", {"destination": [z1, 0], "source": [z0, 0], "x": min(W - 2 * half, x + kw - half),
+                                         "y": 0, "operation": "add"}, "원통 고르기 · 오른쪽 경계 구간")
+        api[z3] = node("MaskComposite", {"destination": m, "source": [z2, 0], "x": 0, "y": 0, "operation": "multiply"},
+                       f"원통 고르기 · {title} 경계 구간만")
+        return [z3, 0]
+
+    e_new, e_old = edges(new, "새 그림"), edges(old, "1차 그림")
+    new_wins = zone_only(wins(e_new, e_old, "새 그림"), "새 그림")
+    old_wins = zone_only(wins(e_old, e_new, "1차 그림"), "1차 그림")
+    b0, b1, a, s_, mi, bl, mo = (nid() for _ in range(7))
+    api[b0] = node("SolidMask", {"value": 1.0, "width": kw, "height": H}, "원통 고르기 · 기본 (가운데 = 새 그림)")
+    api[b1] = node("MaskComposite", {"destination": ["100", 0], "source": [b0, 0], "x": x, "y": 0, "operation": "add"},
+                   "원통 고르기 · 기본 나눔")
+    api[a] = node("MaskComposite", {"destination": [b1, 0], "source": new_wins, "x": 0, "y": 0, "operation": "add"},
+                  "원통 고르기 · 새 그림 물체 가져옴")
+    api[s_] = node("MaskComposite", {"destination": [a, 0], "source": old_wins, "x": 0, "y": 0, "operation": "subtract"},
+                   "원통 고르기 · 1차 그림 물체 지킴")
+    api[mi] = node("MaskToImage", {"mask": [s_, 0]}, "원통 고르기 · 마스크 → 그림")
+    api[bl] = node("ImageBlur", {"image": [mi, 0], "blur_radius": 4, "sigma": 2.0}, "원통 고르기 · 경계 8px 만 부드럽게")
+    api[mo] = node("ImageToMask", {"image": [bl, 0], "channel": "red"}, "원통 고르기 · 최종 마스크")
+    return [mo, 0]
+
+
 def cylinder_pass(api: dict, ids: dict, seed: int, denoise: float = 0.6, keep: float = 0.5, feather: int = 128,
-                  back_text: str = "") -> bool:
+                  back_text: str = "", pick: bool = True) -> bool:
     """원통 생성 (캔버스 양 끝이 붙어 있다는 걸 알고 그리게).
     1차 생성(8) → 반 바퀴 돌림(99, 0°/360° 가 가운데) → 같은 모델·프롬프트로 뒷부분(denoise)을 다시 그림
     (참조 control 도 똑같이 돌림) → 가운데 keep 폭만 새 그림으로, 경계는 feather 로 (경계 = ±90°, 두 그림 내용이 같은 곳)
@@ -233,12 +372,16 @@ def cylinder_pass(api: dict, ids: dict, seed: int, denoise: float = 0.6, keep: f
     api["1009"] = node("VAEDecode", {"samples": ["1008", 0], "vae": vae}, "원통 · 디코드")
     kw = max(2 * feather + 64, min(W - 2 * feather, int(W * keep)))
     x = (W - kw) // 2
-    api["1010"] = node("SolidMask", {"value": 1.0, "width": kw, "height": H}, "원통 · 새 그림 쓸 범위 (가운데)")
-    api["1011"] = node("FeatherMask", {"mask": ["1010", 0], "left": feather, "top": 0, "right": feather, "bottom": 0},
-                       "원통 · 경계 부드럽게")
-    api["1012"] = node("MaskComposite", {"destination": ["100", 0], "source": ["1011", 0], "x": x, "y": 0,
-                                         "operation": "add"}, "원통 · 합성 마스크")
-    api["1013"] = node("ImageCompositeMasked", {"destination": ["99", 0], "source": ["1009", 0], "mask": ["1012", 0],
+    if pick:
+        mask = _pick_mask(api, ["1009", 0], ["99", 0], W, H, x, kw, feather)
+    else:                                                  # 예전: 경계 feather px 를 투명도로 섞음 (반투명 겹침 원인)
+        api["1010"] = node("SolidMask", {"value": 1.0, "width": kw, "height": H}, "원통 · 새 그림 쓸 범위 (가운데)")
+        api["1011"] = node("FeatherMask", {"mask": ["1010", 0], "left": feather, "top": 0, "right": feather, "bottom": 0},
+                           "원통 · 경계 부드럽게")
+        api["1012"] = node("MaskComposite", {"destination": ["100", 0], "source": ["1011", 0], "x": x, "y": 0,
+                                             "operation": "add"}, "원통 · 합성 마스크")
+        mask = ["1012", 0]
+    api["1013"] = node("ImageCompositeMasked", {"destination": ["99", 0], "source": ["1009", 0], "mask": mask,
                                                 "x": 0, "y": 0, "resize_source": False}, "원통 · 합성")
     for k in ("105", "106"):
         api[k]["inputs"]["image"] = ["1013", 0]
