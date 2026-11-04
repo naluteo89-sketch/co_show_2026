@@ -13,7 +13,10 @@ SEAM_TRIGGER = ("Fill the green spaces according to the image. This is a 360 equ
 
 def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
           seed1=None, seed2=None, prefix="VR360/studio", settings: dict | None = None,
-          keep_mask: str | None = None, wrap: dict | None = None) -> tuple[dict, dict]:
+          keep_mask: str | None = None, wrap: dict | None = None, soft_lock: bool = False,
+          photo8k: dict | None = None) -> tuple[dict, dict]:
+    """soft_lock: keep_mask 가 회색(사진 안쪽도 약하게 다시 그림)일 때 DifferentialDiffusion 을 1차 샘플러 모델에 검.
+    photo8k: {"image": 8K 원본 투영 그림, "mask": 섞기 마스크} — 8K 업스케일 뒤·리파인 전에 사진 자리를 원본으로."""
     api = ui_to_api(copy.deepcopy(template_ui))
 
     def set_(key, field, value):
@@ -49,7 +52,7 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
 
     # 원본 사진 보존: 1차 생성에서 사진 영역은 다시 그리지 않음 (초록 부분만 생성)
     if keep_mask:
-        lock_photo_region(api, ids, keep_mask)
+        lock_photo_region(api, ids, keep_mask, soft=soft_lock)
 
     if st.get("cylinder", False) and not wrap:
         # 원통 생성: 다 그린 뒤 띠를 붙이지 않고, 생성 뒷부분을 이음새가 가운데 오게 돌려서 그림
@@ -60,9 +63,13 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
         # 1차 생성 회전 디노이즈: 스텝마다 가로로 돌려 양 끝(0°/360°) 오차가 한 자리에 쌓이지 않게 (PanoWan RSD)
         if int(st.get("rotate_chunks", 0) or 0) > 1 and not keep_mask:
             rotated_first_pass(api, ids, s1, int(st["rotate_chunks"]))
+        src8k = blend_photo_8k(api, photo8k) if photo8k else None
         rf = st.get("refine")
+        attached = False
         if rf and rf.get("enabled", True):
-            attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts)
+            attached = attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts, src=src8k)
+        if src8k and not attached and "119" in api:
+            api["119"]["inputs"]["image"] = src8k
         return api, {"seed1": s1, "seed2": s2}
 
     # 이음새 복원: 띠를 초록(#00ff00)으로 칠해 아웃페인트 LoRA 방식으로 '채우기'
@@ -103,8 +110,9 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
     return api, {"seed1": s1, "seed2": s2}
 
 
-def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
-    """1차 샘플러(31)의 latent 에 노이즈 마스크를 걸어 사진 부분 latent 를 그대로 유지."""
+def lock_photo_region(api: dict, ids: dict, mask_image: str, soft: bool = False) -> bool:
+    """1차 샘플러(31)의 latent 에 노이즈 마스크를 걸어 사진 부분 latent 를 그대로 유지.
+    soft: 회색 마스크(사진 안쪽도 약하게 다시 그림) → 샘플러 모델에 DifferentialDiffusion (값만큼만 디노이즈)."""
     smp = str(ids.get("sampler_main"))
     if smp not in api:
         return False
@@ -112,9 +120,27 @@ def lock_photo_region(api: dict, ids: dict, mask_image: str) -> bool:
     if not isinstance(lat, list):
         return False
     api["950"] = node("LoadImageMask", {"image": mask_image, "channel": "red"}, "생성할 곳 마스크 (사진 영역 유지)")
-    api["951"] = node("SetLatentNoiseMask", {"samples": lat, "mask": ["950", 0]}, "사진 영역은 다시 그리지 않음")
+    api["951"] = node("SetLatentNoiseMask", {"samples": lat, "mask": ["950", 0]},
+                      "사진 영역은 약하게만 다시 그림" if soft else "사진 영역은 다시 그리지 않음")
     api[smp]["inputs"]["latent_image"] = ["951", 0]
+    if soft and isinstance(api[smp]["inputs"].get("model"), list):
+        api["952"] = node("DifferentialDiffusion", {"model": api[smp]["inputs"]["model"]},
+                          "회색 마스크 = 부분 디노이즈 (사진 자리 약하게)")
+        api[smp]["inputs"]["model"] = ["952", 0]
     return True
+
+
+def blend_photo_8k(api: dict, photo8k: dict, src_node: str = "117") -> list | None:
+    """8K 업스케일 결과(117) 의 사진 자리를 원본 사진(원래 해상도로 투영한 8K) 으로 섞음 → 그 위에 리파인.
+    2K 로 다시 그려 4배 늘린 사진 자리 대신 원본 디테일(건물 모양·글자)이 8K 에 들어가고,
+    리파인(0.3)이 사진과 주변을 함께 다듬어 경계가 따로 놀지 않게 함."""
+    if src_node not in api or not photo8k.get("image") or not photo8k.get("mask"):
+        return None
+    api["9101"] = node("LoadImage", {"image": photo8k["image"]}, "원본 사진 8K 투영 (원래 해상도)")
+    api["9102"] = node("LoadImageMask", {"image": photo8k["mask"], "channel": "red"}, "원본 사진 섞기 마스크 (가장자리 부드럽게)")
+    api["9103"] = node("ImageCompositeMasked", {"destination": [src_node, 0], "source": ["9101", 0], "mask": ["9102", 0],
+                                                "x": 0, "y": 0, "resize_source": False}, "8K 사진 자리 = 원본")
+    return ["9103", 0]
 
 
 def wrap_shift_for(yaw: float, W: int) -> tuple[int, float]:
@@ -325,9 +351,13 @@ def _pick_mask(api: dict, new: list, old: list, W: int, H: int, x: int, kw: int,
     e_new, e_old = edges(new, "새 그림"), edges(old, "1차 그림")
     new_wins = zone_only(wins(e_new, e_old, "새 그림"), "새 그림")
     old_wins = zone_only(wins(e_old, e_new, "1차 그림"), "1차 그림")
-    b0, b1, a, s_, mi, bl, mo = (nid() for _ in range(7))
+    b0, bf, b1, a, s_, mi, bl, mo = (nid() for _ in range(8))
     api[b0] = node("SolidMask", {"value": 1.0, "width": kw, "height": H}, "원통 고르기 · 기본 (가운데 = 새 그림)")
-    api[b1] = node("MaskComposite", {"destination": ["100", 0], "source": [b0, 0], "x": x, "y": 0, "operation": "add"},
+    # 기본 나눔은 넓게 부드럽게: 하늘·바닥처럼 밋밋한 곳도 원통 패스가 톤을 바꿔 딱 나누면 세로 경계가 보임
+    # (물체가 있는 곳은 아래 new_wins/old_wins 가 물체째 덮어써서 반투명 겹침 없음)
+    api[bf] = node("FeatherMask", {"mask": [b0, 0], "left": half, "top": 0, "right": half, "bottom": 0},
+                   "원통 고르기 · 기본 나눔 넓게 부드럽게")
+    api[b1] = node("MaskComposite", {"destination": ["100", 0], "source": [bf, 0], "x": x, "y": 0, "operation": "add"},
                    "원통 고르기 · 기본 나눔")
     api[a] = node("MaskComposite", {"destination": [b1, 0], "source": new_wins, "x": 0, "y": 0, "operation": "add"},
                   "원통 고르기 · 새 그림 물체 가져옴")
@@ -531,12 +561,13 @@ def final_from_draft(api: dict, ids: dict, image: str) -> str:
     return str(ids["save_final"])
 
 
-def attach_refine_to_generate(api: dict, ids: dict, rf: dict, prompts: dict, W=8192, H=4096) -> bool:
-    """test_quest3 생성 그래프: 8K 크롭(117) → [리파인] → 디더(119). Lanczos 블렌드(118, 89)는 블러 원인이라 제거."""
+def attach_refine_to_generate(api: dict, ids: dict, rf: dict, prompts: dict, W=8192, H=4096, src=None) -> bool:
+    """test_quest3 생성 그래프: 8K 크롭(117) → [리파인] → 디더(119). Lanczos 블렌드(118, 89)는 블러 원인이라 제거.
+    src: 리파인 입력을 바꿀 때 (예: 원본 사진을 섞은 8K)."""
     src_node, blend_node, lanczos_node, noise_node = "117", "118", "89", "119"
     if src_node not in api or noise_node not in api:
         return False
-    last = add_refine(api, [src_node, 0], W, H, unet=str(ids["unet"]), clip=str(ids["clip"]), vae=str(ids["vae"]),
+    last = add_refine(api, src or [src_node, 0], W, H, unet=str(ids["unet"]), clip=str(ids["clip"]), vae=str(ids["vae"]),
                       positive=rf["positive"], negative=prompts.get("negative", ""), seed=rf.get("seed", 0),
                       steps=rf.get("steps", 20), cfg=rf.get("cfg", 4.0), denoise=rf.get("denoise", 0.3),
                       tile=rf.get("tile", 1536), overlap=rf.get("overlap", 192))

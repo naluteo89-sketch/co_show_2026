@@ -33,12 +33,41 @@ def make_control(img: Image.Image, yaw, pitch, hfov, vfov=None, W=2048, H=1024) 
     return to_image(out)
 
 
-def keep_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, feather=0.04) -> Image.Image:
-    """생성 때 '다시 그릴 곳' 마스크 (흰색=생성, 검정=원본 사진 유지). 사진 가장자리 feather 만큼은 섞어 그림."""
+def keep_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, feather=0.04, floor=0.0) -> Image.Image:
+    """생성 때 '다시 그릴 곳' 마스크 (흰색=생성, 검정=원본 사진 유지). 사진 가장자리 feather 만큼은 섞어 그림.
+    floor > 0: 사진 안쪽도 floor 만큼은 다시 그림 (회색 마스크 · DifferentialDiffusion 과 함께 '약하게 다듬기')."""
     sw, sh = photo_size
     u, v, f = photo_coords(W, H, np.arange(H), yaw, pitch, hfov, sh / sw, vfov)
     w, _ = edge_weight(u, v, f, feather)
-    return Image.fromarray(((1.0 - w) * 255).astype(np.uint8), "L").convert("RGB")
+    return Image.fromarray(((1.0 - w * (1.0 - float(floor))) * 255).astype(np.uint8), "L").convert("RGB")
+
+
+def photo_erp(img: Image.Image, yaw, pitch, hfov, vfov=None, W=8192, H=4096, feather=0.06, inset=0.005,
+              chunk=256) -> tuple[Image.Image, Image.Image]:
+    """원본 사진을 원래 해상도로 W×H ERP 에 투영 (8K 단계에서 사진 자리 디테일을 원본에서 가져오기 위함).
+    반환: (RGB 그림 · 사진 밖은 검정, 섞기 마스크 L · 사진 안 255 → 가장자리 feather 동안 0)."""
+    src = np.asarray(img.convert("RGB"), np.float32)
+    aspect = src.shape[0] / src.shape[1]
+    rgb = np.zeros((H, W, 3), np.uint8)
+    msk = np.zeros((H, W), np.uint8)
+    for r0 in range(0, H, chunk):
+        rows = np.arange(r0, min(H, r0 + chunk))
+        u, v, f = photo_coords(W, H, rows, yaw, pitch, hfov, aspect, vfov)
+        w, d = edge_weight(u, v, f, feather)
+        w = np.where(d < inset, 0.0, w)                        # 사진 테두리 잡티 제외
+        m = w > 0
+        if not m.any():
+            continue
+        blk = np.zeros((len(rows), W, 3), np.float32)
+        blk[m] = sample_plane(src, u[m], v[m])
+        rgb[rows] = np.clip(np.rint(blk), 0, 255).astype(np.uint8)
+        msk[rows] = np.clip(np.rint(w * 255), 0, 255).astype(np.uint8)
+    return Image.fromarray(rgb, "RGB"), Image.fromarray(msk, "L").convert("RGB")
+
+
+def photo_quality_ratio(photo_w, hfov, final_w=8192) -> float:
+    """원본 사진의 1°당 픽셀 / 최종 ERP 의 1°당 픽셀 (1 이상이면 원본이 최종보다 선명)."""
+    return (float(photo_w) / max(1e-3, float(hfov))) / (float(final_w) / 360.0)
 
 
 def to_2to1(im: Image.Image) -> Image.Image:

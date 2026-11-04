@@ -122,12 +122,21 @@ class GenerateMixin:
         img.save(path, optimize=False)
         return path
 
-    def _keep_mask(self, run_id, pl, name, feather):
+    def _keep_mask(self, run_id, pl, name, feather, floor=0.0):
         W, H = self.cfg.get("erp_size", [2048, 1024])
-        m = erp.keep_mask(self.source(run_id).size, *placement_args(pl), W, H, feather)
+        m = erp.keep_mask(self.source(run_id).size, *placement_args(pl), W, H, feather, floor)
         path = self.store.path(run_id, name)
         m.save(path)
         return path
+
+    def _photo_8k(self, run_id, pl, d, feather):
+        """원본 사진을 원래 해상도로 8K ERP 에 투영한 그림 + 섞기 마스크 (8K 단계에서 사진 자리 = 원본)."""
+        W = int(self.cfg.get("quest", {}).get("final_width", 8192))
+        rgb, msk = erp.photo_erp(self.source(run_id), *placement_args(pl), W, W // 2, feather)
+        ip, mp = self.store.path(run_id, d, "photo_8k.png"), self.store.path(run_id, d, "photo_8k_mask.png")
+        rgb.save(ip, compress_level=1)
+        msk.save(mp)
+        return ip, mp
 
     async def control(self, req):
         p = await req.json()
@@ -190,6 +199,27 @@ class GenerateMixin:
             else:
                 st0 = self._settings(p, meta)
                 ver = str(st0.get("version", "A")).upper()
+                # D: 원본 화질 살림 — 배치는 A(사진 원래 크기, 확대 왜곡 없음) + 8K 단계에 원본 섞기 (+ 화질 따라 약한 다시 그리기)
+                plan_d = ver == "D"
+                p8 = self.cfg.get("photo_8k", {})
+                q_ratio = erp.photo_quality_ratio(meta["width"], float(p["placement"]["hfov"]),
+                                                  int(self.cfg.get("quest", {}).get("final_width", 8192)))
+                if plan_d:
+                    print(f"[pano360] 플랜 D · 원본 화질 = 8K 의 {q_ratio:.1f}배")
+                    # 사진별 배율: LLM 판단(enlarge.scale) → 원본 화질(8K 대비 배율)·설정 상한·기울기 한도로 제한
+                    en = (meta.get("analysis") or {}).get("enlarge") or {}
+                    dcfg = self.cfg.get("plan_d", {})
+                    try:
+                        want = float(st0.get("photo_scale") or en.get("scale") or 1.0)
+                    except (TypeError, ValueError):
+                        want = 1.0
+                    scale = max(1.0, min(want, q_ratio, float(dcfg.get("max_scale", 1.7))))
+                    if scale > 1.01 and not p["placement"].get("version_b"):
+                        p["placement"] = version_b_placement(p["placement"], 1.0 / scale,
+                                                             max_extra_tilt=float(dcfg.get("max_extra_tilt", 8)))
+                        p["placement"]["photo_scale"] = {"llm": en.get("scale"), "used": round(scale, 2),
+                                                         "reason": en.get("reason", "")}
+                        print(f"[pano360] 플랜 D 사진 배율 {scale:.2f} (LLM {en.get('scale')}: {en.get('reason', '')})")
                 if ver in ("B", "AB"):
                     # B: 보는 사람을 작게 → 사진을 크게 배치 / AB: 같지만 기울기가 크게 늘지 않는 데까지만 키움
                     # (이후 단계·결과 기록 모두 이 배치 기준)
@@ -209,16 +239,30 @@ class GenerateMixin:
                         wrap = {"shift": shift, "top": top, "bottom": bottom}
                 name = await self._upload_file(backend, ctrl_path, f"{tag}_erp_control.png")
                 kp = self.cfg.get("keep_photo", {})
-                mask_name = None
+                mask_name, soft = None, False
+                sl = self.cfg.get("soft_lock", {})
+                sl_mode = str(sl.get("mode", "off")).lower()
                 if kp.get("enabled", True):          # 사진 영역은 그대로 두고 초록 부분만 생성
                     mask_path = await asyncio.to_thread(self._keep_mask, run_id, gen_pl, f"{d}/keep_mask.png",
                                                         kp.get("mask_feather", 0.04))
                     mask_name = await self._upload_file(backend, mask_path, f"{tag}_keep_mask.png")
+                elif plan_d and not wrap and (sl_mode == "on" or (sl_mode == "auto" and q_ratio >= float(sl.get("min_ratio", 3.0)))):
+                    # 화질이 충분한 사진: 사진 자리는 photo_denoise 만큼만 다시 그림 (회색 마스크 + DifferentialDiffusion)
+                    mask_path = await asyncio.to_thread(self._keep_mask, run_id, gen_pl, f"{d}/soft_mask.png",
+                                                        float(sl.get("feather", 0.15)), float(sl.get("photo_denoise", 0.3)))
+                    mask_name, soft = await self._upload_file(backend, mask_path, f"{tag}_soft_mask.png"), True
+                    print(f"[pano360] 사진 자리 약하게만 다시 그림 (denoise {sl.get('photo_denoise', 0.3)}, 화질 {q_ratio:.1f}배)")
+                photo8k = None
+                if plan_d and p8.get("enabled", True) and not wrap:
+                    ip, mp = await asyncio.to_thread(self._photo_8k, run_id, gen_pl, d, float(p8.get("feather", 0.06)))
+                    photo8k = {"image": await self._upload_file(backend, ip, f"{tag}_photo_8k.png"),
+                               "mask": await self._upload_file(backend, mp, f"{tag}_photo_8k_mask.png")}
                 tmpl = workflow.load_template(self.cfg["workflow"])
                 st = self._settings(p, meta, p["prompts"].get("positive", ""))
                 wf_api, seeds = workflow.build(tmpl, self.cfg["node_ids"], control_image=name, prompts=p["prompts"],
                                                seed1=p.get("seed1"), seed2=p.get("seed2"),
-                                               prefix=prefix, settings=st, keep_mask=mask_name, wrap=wrap)
+                                               prefix=prefix, settings=st, keep_mask=mask_name, wrap=wrap,
+                                               soft_lock=soft, photo8k=photo8k)
                 if kp.get("enabled", True) and kp.get("upscale_photo", True):
                     # 원본 사진 자리 화질: 사진을 원래 해상도로 AI 업스케일 → 마지막에 이걸 붙임
                     ph_name = await backend.upload(await asyncio.to_thread(self._source_png, run_id), f"{tag}_photo.png")
@@ -228,6 +272,7 @@ class GenerateMixin:
                                                   "진단 · 이음새 복원 직후 2K")
                     out_nodes["dbg_seam2k"] = "973"
                 p["settings"] = {k: v for k, v in st.items() if k != "refine"}
+                p["settings"].update(photo_quality=round(q_ratio, 2), photo_8k=bool(photo8k), soft_lock=soft)
                 if wrap:
                     p["settings"]["wrap_in_photo"] = wrap
                 rv = self.cfg.get("review", {})
@@ -444,6 +489,19 @@ class GenerateMixin:
             mode, scale = await asyncio.to_thread(self._paste_photo_file, run_id, n, att, path)
             att["photo_pasted"] = mode
             print(f"[pano360] 원본 사진 다시 붙임: {mode} (사진이 최종보다 {scale:.2f}배 흐림)")
+        tk = self.cfg.get("text_keep", {})
+        boxes = [r.get("box") for r in ((meta.get("analysis") or {}).get("text_regions") or []) if isinstance(r, dict)]
+        if tk.get("enabled", True) and generated and boxes and (att.get("placement") or {}).get("hfov"):
+            # 간판·현판 글자: 생성·리파인이 한글을 뭉개므로 그 자리만 원본 사진 픽셀로 (색은 결과에 맞춤)
+            try:
+                pl = att["placement"]
+                await asyncio.to_thread(lambda: erp.paste_text_regions(
+                    Image.open(path), self.source(run_id), boxes, *placement_args(pl),
+                    pad=float(tk.get("pad", 0.15)), soft=float(tk.get("soft", 0.35))).save(path))
+                att["text_kept"] = len(boxes)
+                print(f"[pano360] 글자 영역 {len(boxes)}곳 원본으로 되살림")
+            except Exception as e:
+                print(f"[pano360] 글자 영역 되살리기 실패: {e}")
         df = next((x for x in st["files"] if x["node"] == out_nodes.get("dbg_seam2k")), None)
         if df:                           # 진단용 2K (이음새 선이 어느 단계에서 생기는지 확인)
             try:

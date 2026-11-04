@@ -75,14 +75,9 @@ def decide(a: dict) -> dict:
     p = f.get("people") or {}
     cnt, near = p.get("count_in_photo", "0"), p.get("nearest", "none")
     place = f.get("place_category", "other")
+    # 사람: 규칙으로 절대 없음 (전시 요구사항) — 사진 속 사람 수와 관계없이
     people = "none"
-    if _conf(f, "people") == "low" or cnt == "0" or not (p.get("evidence") or "").strip():
-        why.append(f"사람: 없음 (사진 {cnt}명, 확신 {_conf(f, 'people')})")
-    elif cnt in ("4-10", "10+") or (cnt == "1-3" and place in ("city_street", "plaza", "market") and near != "near"):
-        people = "few_far"
-        why.append(f"사람: 멀리 작게 몇 명 (사진 {cnt}명, {place})")
-    else:
-        why.append(f"사람: 없음 (사진 {cnt}명뿐, {place})")
+    why.append(f"사람: 없음 (규칙 · 사진 {cnt}명, {place})")
 
     # 주인공: 하나뿐인 랜드마크이고 사진에도 하나일 때만 'only one'
     s = f.get("subject") or {}

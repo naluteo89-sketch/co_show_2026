@@ -301,9 +301,36 @@ class _Base:
                 steps = int(prof.get("steps", 4))
                 node["inputs"].update(cfg=float(prof.get("cfg", 1.0)), steps=steps,
                                       start_at_step=round(k * steps / n), end_at_step=round((k + 1) * steps / n))
+        self._apply_nag(wf, prof.get("nag"))
         print(f"[api] ⚠ 증류 모델 '{swapped[0][3]}' 사용 → 샘플러를 CFG {prof.get('cfg', 1.0)}, "
               f"{prof.get('steps', 6)}스텝으로 맞춤. 가장 좋은 결과는 서버에 base 모델을 넣는 거예요.")
         self.last_profile = "distilled"
+
+
+    def _apply_nag(self, wf, nag):
+        """증류 모델(CFG 1)은 네거티브를 계산하지 않음 → 샘플러 모델 앞에 NAGuidance(Normalized Attention Guidance)를 넣어
+        네거티브(사람 등)가 실제로 적용되게 함. 같은 모델 출력은 NAG 노드 하나를 같이 씀."""
+        if not nag or not nag.get("enabled", True):
+            return
+        made = {}
+        for nid, node in list(wf.items()):
+            if node.get("class_type") not in ("KSampler", "KSamplerAdvanced"):
+                continue
+            m = node["inputs"].get("model")
+            if not isinstance(m, list):
+                continue
+            key = (str(m[0]), m[1])
+            if key not in made:
+                new_id = str(9000 + len(made) + 1)
+                while new_id in wf:
+                    new_id = str(int(new_id) + 100)
+                wf[new_id] = {"class_type": "NAGuidance", "_meta": {"title": "NAG (네거티브 적용)"},
+                              "inputs": {"model": m, "nag_scale": float(nag.get("scale", 5.0)),
+                                         "nag_alpha": float(nag.get("alpha", 0.5)), "nag_tau": float(nag.get("tau", 1.5))}}
+                made[key] = new_id
+            node["inputs"]["model"] = [made[key], 0]
+        if made:
+            print(f"[api] NAGuidance {len(made)}개 → 증류 모델에서도 네거티브 적용 (scale {nag.get('scale', 5.0)})")
 
 
 class ComfyUI(_Base):

@@ -161,3 +161,66 @@ def paste_photo(final_img: Image.Image, photo: Image.Image, yaw, pitch, hfov, vf
                               .resize(final_img.size, Image.BILINEAR), np.float32)[..., None] / 255.0
         out += wp * (float(detail) - 1.0) * (F - gF)
     return to_image(out)
+
+
+
+def paste_text_regions(final_img: Image.Image, photo: Image.Image, boxes, yaw, pitch, hfov, vfov=None,
+                       pad=0.15, soft=0.35, chunk=256) -> Image.Image:
+    """간판·현판처럼 글자가 있는 사진 영역만 원본 사진 픽셀로 되살림 (생성·리파인이 한글을 뭉개는 것 방지).
+    boxes: [[x0, y0, x1, y1], ...] 사진 비율 좌표(0~1). 상자마다 pad 만큼 넓히고 가장자리 soft 비율로 부드럽게.
+    붙이는 사진 조각은 결과의 같은 자리 밝기·색 통계에 맞춰서 네모로 따로 놀지 않게 함."""
+    bx = []
+    for b in boxes or []:
+        try:
+            x0, y0, x1, y1 = (min(1.0, max(0.0, float(t))) for t in b[:4])
+        except (TypeError, ValueError):
+            continue
+        if x1 - x0 < 0.003 or y1 - y0 < 0.003:
+            continue
+        pw, phh = (x1 - x0) * pad, (y1 - y0) * pad
+        bx.append((max(0.0, x0 - pw), max(0.0, y0 - phh), min(1.0, x1 + pw), min(1.0, y1 + phh)))
+    if not bx:
+        return final_img
+    out = np.asarray(final_img.convert("RGB"), np.float32).copy()
+    H, W = out.shape[:2]
+    ph = np.asarray(photo.convert("RGB"), np.float32)
+    aspect = ph.shape[0] / ph.shape[1]
+
+    def weight(u, v, f, box):                              # 상자 안 1, 가장자리 soft 폭에서 0
+        x0, y0, x1, y1 = box
+        fx, fy = (u + 1) / 2, (1 - v) / 2
+        sx, sy = max(1e-4, soft * (x1 - x0) / 2), max(1e-4, soft * (y1 - y0) / 2)
+        w = smooth(np.minimum(fx - x0, x1 - fx) / sx) * smooth(np.minimum(fy - y0, y1 - fy) / sy)
+        return np.where(f & (fx >= x0) & (fx <= x1) & (fy >= y0) & (fy <= y1), w, 0.0)
+
+    # 상자별 색 맞춤: 결과(작은 해상도)의 그 자리 vs 원본 사진 조각의 평균·표준편차
+    sW, sH = 1024, 512
+    small = np.asarray(final_img.convert("RGB").resize((sW, sH), Image.BILINEAR), np.float32)
+    u, v, f = photo_coords(sW, sH, np.arange(sH), yaw, pitch, hfov, aspect, vfov)
+    maps = []
+    for box in bx:
+        m = weight(u, v, f, box) > 0.5
+        crop = ph[int(box[1] * ph.shape[0]):max(int(box[1] * ph.shape[0]) + 1, int(box[3] * ph.shape[0])),
+                  int(box[0] * ph.shape[1]):max(int(box[0] * ph.shape[1]) + 1, int(box[2] * ph.shape[1]))].reshape(-1, 3)
+        if m.sum() < 4 or len(crop) < 4:
+            maps.append((np.zeros(3), np.ones(3), np.zeros(3)))
+            continue
+        g = small[m]
+        mu_p, sd_p = crop.mean(0), crop.std(0) + 1e-3
+        mu_g, sd_g = g.mean(0), g.std(0) + 1e-3
+        maps.append((mu_p, np.clip(sd_g / sd_p, 0.6, 1.6), mu_g))
+
+    for r0 in range(0, H, chunk):
+        rows = np.arange(r0, min(H, r0 + chunk))
+        u, v, f = photo_coords(W, H, rows, yaw, pitch, hfov, aspect, vfov)
+        blk = out[rows]
+        for box, (mu_p, sc, mu_g) in zip(bx, maps):
+            w = weight(u, v, f, box)
+            m = w > 0
+            if not m.any():
+                continue
+            src = (sample_plane(ph, u[m], v[m]) - mu_p) * sc + mu_g
+            ww = w[m][:, None]
+            blk[m] = blk[m] * (1 - ww) + src * ww
+        out[rows] = blk
+    return to_image(out)

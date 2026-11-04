@@ -16,8 +16,11 @@ NEG_COMMON = ("inconsistent lighting, different time of day, exposure mismatch, 
               "color cast, green tint, desaturated area, visible seams, mismatched lighting, repeated textures, "
               "warped perspective, blurry edges, low quality, out of frame, floating objects, mismatched colors, "
               "hard edges, text, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, "
-              "black borders, broken horizon, duplicated objects, duplicate people, HDR look, oversharpened, oversaturated, "
+              "black borders, broken horizon, duplicated objects, HDR look, oversharpened, oversaturated, "
               "overexposed sky, blown-out highlights, halos around edges, painterly texture, smeared ground, swirl at the bottom")
+# 사람은 규칙으로 절대 안 나옴 → 모든 네거티브(본·이음새·리파인)에 항상 넣음 (증류 모델은 NAGuidance 로 네거티브 적용)
+NO_PEOPLE_NEG = ("people, person, man, woman, child, crowd, pedestrians, tourists, visitors, hikers, "
+                 "human figures, silhouettes of people, small distant figures")
 # 이음새 복원: '세로 이음새·띠·경계' 를 말하면 그 선을 그림 → 이어지는 풍경만 설명 (트리거 문장은 유지)
 SEAM_POS_TMPL = ("Fill the green spaces according to the image. One continuous, evenly lit view of {seam_elements}, "
                  "in the same {lighting_short}, with the same brightness and colors throughout. "
@@ -144,6 +147,15 @@ STEP 2 - prompt fields, written from STEP 1 only:
   never the main subject.
 - horizon_y: where the true horizon (eye level) sits in the photo, 0=top edge, 1=bottom edge; null if not visible.
 - hfov_estimate: horizontal field of view in degrees of the photo (phone main camera ~ 65-75, ultra-wide ~ 100-120).
+- enlarge: how much larger than its true angle this photo can be shown on the 360 sphere and still look natural
+  (a larger photo = more real content, less generated world, but its perspective is stretched).
+  scale 1.0 = true size: close buildings, gates, towers, interiors, strong converging lines, tilted shots, people-height
+  close objects. 1.2-1.4 = mid-distance scenes (a street, a courtyard seen from afar, an avenue). 1.5-1.7 = wide open far
+  views where stretching is invisible (sea, mountains, fields, sky, distant skyline). reason = one short Korean sentence.
+- text_regions: every sign, signboard, hanging name board (hyeonpan) or painted lettering in the photo whose letters
+  (Korean or any script) are readable. box = [x0, y0, x1, y1] as fractions of the photo width/height (0 = left/top,
+  1 = right/bottom), tight around the lettering and its board; text = the letters as written. [] if none.
+  These areas are restored from the original photo afterwards so the real letters stay readable.
 - summary_ko / tips_ko: Korean, for the operator. tips_ko: risks for this photo and what to adjust.
 
 Style: English, concrete visual nouns, materials and colors. No camera/lens jargon, no style words like
@@ -197,10 +209,17 @@ SCHEMA = {
         "hfov_estimate": {"type": "number"},
         "summary_ko": {"type": "string"},
         "tips_ko": {"type": "string"},
+        "enlarge": {"type": "object", "additionalProperties": False,          # 사진을 얼마나 키워 붙여도 자연스러운지
+                    "properties": {"scale": {"type": "number"}, "reason": {"type": "string"}},
+                    "required": ["scale", "reason"]},
+        "text_regions": {"type": "array", "items": {             # 글자 보존: 간판·현판 위치 (사진 비율 좌표)
+            "type": "object", "additionalProperties": False,
+            "properties": {"box": {"type": "array", "items": {"type": "number"}}, "text": {"type": "string"}},
+            "required": ["box", "text"]}},
     },
     "required": ["observed", "facts", "scene", "surroundings", "behind", "ground_below", "sky_above", "lighting", "lighting_detail",
                  "lighting_short", "lighting_negatives", "content_negatives", "seam_elements", "horizon_y",
-                 "hfov_estimate", "summary_ko", "tips_ko"],
+                 "hfov_estimate", "summary_ko", "tips_ko", "enlarge", "text_regions"],
 }
 
 
@@ -220,7 +239,8 @@ import re as _re
 _BANNED = r"\b(cinematic|dramatic|epic|8k|4k|hdr|fisheye|wide[- ]angle|bokeh|lens flares?|god ?rays?|sun ?rays?|light beams?)\b"
 _HAZE_ADJ = r"\b(hazy|misty|foggy|smoky)\s*"
 _HAZE_NOUN = r"\b(haze|mist|fog|smog)\b"
-_PEOPLE = r"\b(people|persons?|pedestrians|visitors?|tourists?|crowds?|walkers?|couples?|families|children|hikers?|strollers?)\b"
+_PEOPLE = (r"\b(people|persons?|pedestrians|visitors?|tourists?|crowds?|walkers?|couples?|families|children|hikers?|strollers?"
+           r"|figures?|silhouettes?|kids?|monks?|travell?ers?|passers?-?by|cyclists?|joggers?)\b")
 # '보는 사람·사진' 을 가리키는 말 → 위치 말만 남김 (그대로 두면 사람·액자·포스터를 그림)
 _META = [
     (r"\b(directly\s+)?behind\s+the\s+(viewer|camera|observer|photographer)('s)?(\s+(back|position))?", "behind"),
@@ -357,10 +377,8 @@ def _constraints(a: dict, with_subject: bool = True) -> str:
     if with_subject and d.get("subject_unique") and subj and subj.lower() not in ("none", "n/a") and isinstance(n, int) and n >= 1:
         num = {1: "only one", 2: "only two", 3: "only three"}.get(n, f"only {n}")
         out.append(f"There is {num} {subj} here")   # 'structure'·'photo' 같은 명사를 덧붙이면 오히려 그림
-    if d.get("people") == "few_far":                # 규칙: 사진에 사람이 보이고 붐비는 곳일 때만
-        out.append("Only a few small figures appear far in the distance")
-    else:                                            # 기본 ('people' 단어는 넣으면 오히려 그림)
-        out.append("The place is quiet and deserted")
+    # 사람: 규칙으로 절대 없음 ('people' 단어는 Positive 에 넣으면 오히려 그림 → 상태로만 서술)
+    out.append("The place is quiet and deserted")
     if not o.get("haze_present", False):
         out.append("The air is clear")
     return " ".join(_sentence(x) for x in out)
@@ -379,8 +397,7 @@ def _ground_mistake(a: dict) -> str:
 def _guard_negatives(a: dict) -> str:
     o = a.get("observed") or {}
     out = [_clean(x, 6) for x in (o.get("absent") or [])]
-    if o:
-        out.append("people, crowd, pedestrians, figures")
+    out.append(NO_PEOPLE_NEG)                             # 분석 형식과 관계없이 항상
     subj = _clean(o.get("main_subject") or "", 6)
     if subj and subj.lower() not in ("none", "n/a"):
         out.append(f"second {subj}, duplicate {subj}")
@@ -426,7 +443,9 @@ def assemble(a: dict) -> dict:
     # 원통 패스(0°/360° 가 가운데)용: 뒤쪽만 — 장면·주인공 문장 없이 (뒤에 두 번째 주인공이 생기지 않게)
     back_positive = ""
     if behind:
-        back_positive = " ".join(x for x in [TRIGGER, behind, ls, *common, _constraints(a, with_subject=False), TAIL] if x)
+        # 선 문장은 뒤쪽 묘사 기준으로 다시 계산 (본 프롬프트 주변 묘사에 있던 길 이어짐이 뒤쪽 프롬프트에선 빠지던 문제)
+        ls_back = rules.line_sentences(a.get("rules") or {}, behind)
+        back_positive = " ".join(x for x in [TRIGGER, behind, ls_back, *common, _constraints(a, with_subject=False), TAIL] if x)
     guards = _guard_negatives(a)
     negative = _join([", ".join(a["lighting_negatives"]), NEG_COMMON, ", ".join(a["content_negatives"]), guards])
     seam_positive = SEAM_POS_TMPL.format(seam_elements=_phrase(a["seam_elements"]),
@@ -532,7 +551,7 @@ def pole_prompts(a: dict) -> dict:
 REFINE_TMPL = "{scene} Sharp, natural fine detail and realistic textures, true-to-life colors, natural contrast."
 REFINE_NEG = ("painting, illustration, cartoon, anime, digital art, CGI, 3d render, watercolor, flat colors, "
               "posterized, smooth plastic texture, oversharpened, halos, HDR look, oversaturated, blurry, "
-              "text, watermark")
+              "text, watermark, " + NO_PEOPLE_NEG)
 
 
 def refine_prompts(a: dict, fallback_positive: str = "") -> dict:
