@@ -51,6 +51,43 @@ def photo_rows_at_edge(ctrl_path, margin=8) -> tuple[int, int]:
 
 
 class GenerateMixin:
+    def _refs(self, run_id, meta):
+        """meta.refs 의 참고 사진들 (최대 4장). 없거나 못 읽으면 빈 목록."""
+        out = []
+        for name in (meta.get("refs") or [])[:4]:
+            try:
+                out.append(erp.load_upright(self.store.path(run_id, name)))
+            except Exception as e:
+                print(f"[pano360] 참고 사진 읽기 실패 {name}: {e}")
+        return out
+
+    @serialized_run
+    async def add_refs(self, req):
+        """같은 장소·비슷한 구도 사진을 참고 사진으로 붙임 (주변 상황 묘사용). form: image(여러 장), clear=1 이면 비우고 다시."""
+        run_id = req.match_info["run_id"]
+        meta = self.store.read(run_id)
+        form = await req.post()
+        if form.get("clear"):
+            meta["refs"] = []
+        refs = list(meta.get("refs") or [])
+        for f in form.getall("image", []):
+            if not hasattr(f, "file"):
+                continue
+            data = f.file.read()
+            try:
+                erp.load_upright(io.BytesIO(data))
+            except Exception:
+                return jresp({"error": f"이미지 파일을 읽을 수 없어요: {f.filename}"}, 400)
+            ext = os.path.splitext(f.filename or "")[1].lower() or ".jpg"
+            name = f"ref_{len(refs) + 1}{ext}"
+            with open(self.store.path(run_id, name), "wb") as out:
+                out.write(data)
+            refs.append(name)
+            meta.setdefault("ref_names", {})[name] = f.filename
+        meta["refs"] = refs[:4]
+        self.store.write(run_id, meta)
+        return jresp({"refs": meta["refs"], "names": meta.get("ref_names", {})})
+
     async def upload(self, req):
         form = await req.post()
         f = form.get("image")
@@ -83,10 +120,28 @@ class GenerateMixin:
         if err:
             return err
         try:
-            a, usage = await self.openai.analyze(img, p.get("note", ""), model)
+            refs = self._refs(run_id, meta)              # 같은 장소 비슷한 구도 사진들 (주변 묘사 참고용)
+            a, usage = await self.openai.analyze(img, p.get("note", ""), model, refs=refs)
+            if refs:
+                print(f"[pano360] 참고 사진 {len(refs)}장 함께 분석")
         except Exception as e:
             return jresp({"error": str(e)}, 502)
 
+        # 글자 상자마다 원본 해상도로 잘라 다시 읽기 (사용자 11-05: 좌표마다 글자 확인 · 한자 현판은 한자 그대로)
+        regs = a.get("text_regions") or []
+        if regs:
+            try:
+                crops = llm.text_crops(img, regs)
+                if any(c is not None for c in crops):
+                    tr, u2 = await self.openai.read_texts(crops, model)
+                    llm.apply_text_reads(a, tr.get("items"))
+                    for r in regs:
+                        print(f"[pano360] 글자 다시 읽음: {r.get('text_first')!r} → {r.get('text')!r} ({r.get('script')})")
+                    if isinstance(usage, dict) and isinstance(u2, dict):
+                        usage = {k: (usage.get(k, 0) + u2.get(k, 0)) if isinstance(u2.get(k), int) else usage.get(k)
+                                 for k in set(usage) | set(u2)}
+            except Exception as e:
+                print(f"[pano360] 글자 다시 읽기 실패 (처음 읽은 글자 사용): {e}")
         # LLM 결과는 먼저 저장 (뒤 계산이 실패해도 다시 호출·과금하지 않게)
         meta.update(analysis=a, note=p.get("note", ""), usage=usage, model=model)
         try:                                             # 파이썬 규칙 결정 (사람·주인공·주변 건물·이어지는 선) — 기록에 남김
@@ -108,6 +163,22 @@ class GenerateMixin:
                 "vfov": None,
                 "hfov_source": "EXIF" if meta["exif_hfov"] else "LLM 추정",
             }
+            # 360 배치 (사용자 11-05): 주인공이 HMD 처음 정면(yaw 0)에 오도록 사진 yaw 를 정함 → 나머지도 360 기준 기록
+            if self.cfg.get("hmd_front", "subject") == "subject":
+                fy = erp.subject_front_yaw((meta["width"], meta["height"]), a.get("objects"), placement["pitch"], hfov)
+                if fy is not None:
+                    placement["yaw"] = fy
+                    placement["yaw_source"] = "주인공 정면"
+            try:
+                a["layout_360"] = erp.layout_360((meta["width"], meta["height"]), a.get("objects") or [],
+                                                 *placement_args(placement))
+            except Exception as e:
+                print(f"[pano360] 360 배치 계산 실패: {e}")
+            if a.get("text_regions"):                     # 글자 상자 → 360 위치 (프롬프트 위치 말·HMD 확인용)
+                dirs = erp.text_region_dirs((meta["width"], meta["height"]), a["text_regions"],
+                                            *placement_args(placement))
+                for d in dirs:
+                    a["text_regions"][d["index"]]["dir"] = d
             prompts = llm.assemble(a)
         except Exception as e:
             return jresp({"error": f"분석 결과를 프롬프트로 바꾸다 실패 (분석은 저장됨): {e}", "analysis": a}, 500)
@@ -137,6 +208,42 @@ class GenerateMixin:
         rgb.save(ip, compress_level=1)
         msk.save(mp)
         return ip, mp
+
+    def _photo_8k_core(self, run_id, pl, d, hc):
+        """마지막에 원본으로 다시 덮을 안쪽 마스크: 사진을 core 비율로 줄인 범위 (경계 링은 리파인 결과 그대로)."""
+        import math
+        W = int(self.cfg.get("quest", {}).get("final_width", 8192))
+        yaw, pitch, hfov, vfov = placement_args(pl)
+        src = self.source(run_id)
+        k = float(hc.get("core", 0.85))
+        tv = math.tan(math.radians(vfov) / 2) if vfov else math.tan(math.radians(hfov) / 2) * src.height / src.width
+        ch = 2 * math.degrees(math.atan(math.tan(math.radians(hfov) / 2) * k))
+        cv = 2 * math.degrees(math.atan(tv * k))
+        _, msk = erp.photo_erp(src, yaw, pitch, ch, cv, W, W // 2, float(hc.get("core_feather", 0.15)))
+        cp = self.store.path(run_id, d, "photo_8k_core.png")
+        msk.save(cp)
+        return cp
+
+    def _photo_2k(self, run_id, pl, d, hc):
+        """2K: 원본 투영 그림 · 넣을 마스크(가장자리 feather) · 다시 그릴 범위(사진을 pad 만큼 넓힌 것, 넓게 흐림)."""
+        W, H = self.cfg.get("erp_size", [2048, 1024])
+        yaw, pitch, hfov, vfov = placement_args(pl)
+        src = self.source(run_id)
+        rgb, msk = erp.photo_erp(src, yaw, pitch, hfov, vfov, W, H, float(hc.get("feather", 0.12)))
+        pad = 1.0 + float(hc.get("region_pad", 0.35))
+        big_h = min(170.0, hfov * pad)
+        big_v = None if not vfov else min(170.0, vfov * pad)
+        if big_v is None:                                # 세로도 같은 비율로 넓힘
+            import math
+            asp = src.height / src.width
+            tv = math.tan(math.radians(hfov) / 2) * asp
+            big_v = min(170.0, 2 * math.degrees(math.atan(tv)) * pad)
+        _, reg = erp.photo_erp(src, yaw, pitch, big_h, big_v, W, H, float(hc.get("region_feather", 0.3)))
+        ip, mp, rp = (self.store.path(run_id, d, n) for n in ("photo_2k.png", "photo_2k_mask.png", "photo_2k_region.png"))
+        rgb.save(ip)
+        msk.save(mp)
+        reg.save(rp)
+        return ip, mp, rp
 
     async def control(self, req):
         p = await req.json()
@@ -257,12 +364,37 @@ class GenerateMixin:
                     ip, mp = await asyncio.to_thread(self._photo_8k, run_id, gen_pl, d, float(p8.get("feather", 0.06)))
                     photo8k = {"image": await self._upload_file(backend, ip, f"{tag}_photo_8k.png"),
                                "mask": await self._upload_file(backend, mp, f"{tag}_photo_8k_mask.png")}
+                harm = None
+                hc = self.cfg.get("photo_harmonize", {})
+                if (st0.get("photo_harmonize") or hc.get("enabled", False)) and not wrap and not plan_d:
+                    # 임시(11-05): 2K 결과에 원본 넣고 사진+둘레만 약하게 다시 그림
+                    # 1차 생성에서 사진 자리를 고정(초록만 생성) — 안 그러면 모델이 사진 자리를 다른 크기로 다시 그려
+                    # 원본을 넣을 때 '사진 속 사진'(크기 다른 물체 두 개)이 됨 (11-05 16 a06 실패)
+                    if not mask_name:
+                        mask_path = await asyncio.to_thread(self._keep_mask, run_id, gen_pl, f"{d}/keep_mask.png",
+                                                            float(hc.get("lock_feather", 0.04)))
+                        mask_name, soft = await self._upload_file(backend, mask_path, f"{tag}_keep_mask.png"), False
+                    paths = await asyncio.to_thread(self._photo_2k, run_id, gen_pl, d, hc)
+                    harm = {"image": await self._upload_file(backend, paths[0], f"{tag}_photo_2k.png"),
+                            "mask": await self._upload_file(backend, paths[1], f"{tag}_photo_2k_mask.png"),
+                            "region": await self._upload_file(backend, paths[2], f"{tag}_photo_2k_region.png"),
+                            "denoise": float(st0.get("harmonize_denoise") or hc.get("denoise", 0.4))}
+                    print(f"[pano360] 원본 보존 다시 그리기 (denoise {harm['denoise']})")
+                    if hc.get("final_8k", True) and photo8k is None:
+                        # 업스케일·리파인 뒤 마지막에 사진 자리 = 원본 원래 해상도 (2K 사진 자리가 원본이라 내용이 같음)
+                        ip, mp = await asyncio.to_thread(self._photo_8k, run_id, gen_pl, d, float(hc.get("final_feather", 0.12)))
+                        cp = await asyncio.to_thread(self._photo_8k_core, run_id, gen_pl, d, hc)
+                        photo8k = {"image": await self._upload_file(backend, ip, f"{tag}_photo_8k.png"),
+                                   "mask": await self._upload_file(backend, mp, f"{tag}_photo_8k_mask.png"),
+                                   "core": await self._upload_file(backend, cp, f"{tag}_photo_8k_core.png")}
                 tmpl = workflow.load_template(self.cfg["workflow"])
                 st = self._settings(p, meta, p["prompts"].get("positive", ""))
+                if harm and isinstance(st.get("refine"), dict):   # 보존 모드: 8K 리파인 약하게 (원본 넣은 뒤 경계·질감만 녹임)
+                    st["refine"] = {**st["refine"], "denoise": float(hc.get("refine_denoise", 0.15))}
                 wf_api, seeds = workflow.build(tmpl, self.cfg["node_ids"], control_image=name, prompts=p["prompts"],
                                                seed1=p.get("seed1"), seed2=p.get("seed2"),
                                                prefix=prefix, settings=st, keep_mask=mask_name, wrap=wrap,
-                                               soft_lock=soft, photo8k=photo8k)
+                                               soft_lock=soft, photo8k=photo8k, harmonize=harm)
                 if kp.get("enabled", True) and kp.get("upscale_photo", True):
                     # 원본 사진 자리 화질: 사진을 원래 해상도로 AI 업스케일 → 마지막에 이걸 붙임
                     ph_name = await backend.upload(await asyncio.to_thread(self._source_png, run_id), f"{tag}_photo.png")
@@ -272,7 +404,8 @@ class GenerateMixin:
                                                   "진단 · 이음새 복원 직후 2K")
                     out_nodes["dbg_seam2k"] = "973"
                 p["settings"] = {k: v for k, v in st.items() if k != "refine"}
-                p["settings"].update(photo_quality=round(q_ratio, 2), photo_8k=bool(photo8k), soft_lock=soft)
+                p["settings"].update(photo_quality=round(q_ratio, 2), photo_8k=bool(photo8k), soft_lock=soft,
+                                     photo_harmonize=({"denoise": harm["denoise"]} if harm else False))
                 if wrap:
                     p["settings"]["wrap_in_photo"] = wrap
                 rv = self.cfg.get("review", {})
@@ -294,10 +427,36 @@ class GenerateMixin:
         meta["attempts"].append({"n": n, "backend": bk, "prompt_id": pid, "mode": mode, "out_nodes": out_nodes,
                                  **extra,
                                  "placement": p.get("placement") or {}, "prompts": p.get("prompts") or {},
+                                 "text_regions_erp": self._text_dirs(meta, p.get("placement") or {}),
+                                 "layout_erp": self._layout(meta, p.get("placement") or {}),
                                  "settings": p.get("settings") or {}, "seeds": seeds, "state": "queued",
                                  "files": [], "created": now()})
         self.store.write(run_id, meta)
         return jresp({"attempt": n, "prompt_id": pid, "seeds": seeds})
+
+    def _text_dirs(self, meta, pl):
+        """이번 시도의 실제 배치(AB 확대 포함)로 글자 상자 360 위치 — 결과 검수·HMD 에서 그 자리 확인용."""
+        regs = (meta.get("analysis") or {}).get("text_regions") or []
+        if not regs or not pl.get("hfov") or meta.get("is_erp"):
+            return []
+        try:
+            W = int(self.cfg.get("quest", {}).get("final_width", 8192))
+            return erp.text_region_dirs((meta["width"], meta["height"]), regs, *placement_args(pl), W=W, H=W // 2)
+        except Exception as e:
+            print(f"[pano360] 글자 위치 계산 실패: {e}")
+            return []
+
+    def _layout(self, meta, pl):
+        """이번 시도의 실제 배치로 360 배치 기록 (사진 범위·물체 위치·생성 구역) — HMD 검수용."""
+        if not pl.get("hfov") or meta.get("is_erp"):
+            return {}
+        try:
+            W = int(self.cfg.get("quest", {}).get("final_width", 8192))
+            return erp.layout_360((meta["width"], meta["height"]), (meta.get("analysis") or {}).get("objects") or [],
+                                  *placement_args(pl), W=W)
+        except Exception as e:
+            print(f"[pano360] 360 배치 계산 실패: {e}")
+            return {}
 
     def _settings(self, p, meta, positive=""):
         """화면 설정 + config 기본값 + 리파인(LoRA 없는 디테일 패스) 프롬프트."""
@@ -479,8 +638,14 @@ class GenerateMixin:
             # 생성 결과의 밝기·대비·색을 원본 사진 쪽으로 (그림 같은 밝고 평평한 톤 완화)
             raw = self.store.path(run_id, adir(n, f"result_{tag}_raw.png"))
             os.replace(path, raw)
-            await asyncio.to_thread(lambda: erp.tone_match(Image.open(raw), self.source(run_id), tm).save(path))
-            att["tone_match"] = tm
+            pl = att.get("placement") or {}
+            if pl.get("hfov"):        # 사진 자리 ↔ 원본 같은 픽셀 비교로 주변까지 같은 색감 (화이트밸런스·밝기·대비)
+                await asyncio.to_thread(lambda: erp.tone_match_region(Image.open(raw), self.source(run_id),
+                                                                      *placement_args(pl), tm).save(path))
+                att["tone_match"] = {"mode": "region", "strength": tm}
+            else:
+                await asyncio.to_thread(lambda: erp.tone_match(Image.open(raw), self.source(run_id), tm).save(path))
+                att["tone_match"] = tm
         if self.cfg.get("keep_photo", {}).get("enabled", True) and generated and (att.get("placement") or {}).get("hfov"):
             # 원본 사진을 원래 해상도로 같은 자리에 다시 붙임 → 사진에 있던 건 절대 안 사라짐
             pf = next((x for x in st["files"] if x["node"] == out_nodes.get("photo_up")), None)

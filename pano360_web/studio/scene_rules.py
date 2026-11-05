@@ -111,13 +111,28 @@ def decide(a: dict) -> dict:
             name = (ln.get("name") or ln.get("kind") or "").strip().rstrip(".")
             if not name:
                 continue
+            kind = ln.get("kind", "other")
+            if kind == "power_line" or re.search(r"\b(cables?|wires?|power lines?|ropeways?|cableways?)\b", name, re.I):
+                continue                                   # 전선·케이블은 이어짐 문장을 쓰면 하늘에 줄이 늘어남 (08·17)
             course = ln.get("course")
-            tail = {"straight": "runs straight on and continues all around",
-                    "curves_left": "curves gently to the left and continues on",
-                    "curves_right": "curves gently to the right and continues on"}.get(course)
+            plural = bool(re.search(r"[^s]s$", name.split()[-1])) and not re.search(r"\b(steps|stairs)$", name)
+            v = (lambda one, many: many if plural else one)
+            # 길·데크·철길 등 직선: '한 바퀴(all around)' 가 아니라 뒤로 곧게 이어짐 (뒤쪽에서 길이 끊기던 문제)
+            tail = {"straight": f"{v('runs', 'run')} straight ahead and {v('continues', 'continue')} straight on behind"
+                    if kind in ("road", "path", "walkway", "bridge_deck", "tree_row", "hedge")
+                    or re.search(r"\b(track|rails?|railway|boardwalk|avenue|path|road|street|trail|promenade|walkway|alley)\b", name, re.I)
+                    else f"{v('runs', 'run')} straight on and {v('continues', 'continue')} along the same side",
+                    "curves_left": f"{v('curves', 'curve')} gently to the left and {v('continues', 'continue')} on",
+                    "curves_right": f"{v('curves', 'curve')} gently to the right and {v('continues', 'continue')} on"}.get(course)
             if course == "ends":
                 end = (ln.get("ends_at") or "").strip().rstrip(".")
-                tail = f"comes to a natural end at {end}" if end else None
+                end = end[:1].lower() + end[1:]
+                first = (end.split() or [""])[0]
+                if first in ("the", "a", "an", "its", "their"):
+                    end = "at " + end
+                elif first not in ("at", "in", "near", "on", "by", "beside", "where", "against", "before", "into"):
+                    end = ""                               # 'ends_at' 이 설명문이면 (예: 'Rise from…') 붙이지 않음
+                tail = f"{v('comes', 'come')} to a natural end {end}".strip()
             if tail:
                 lines.append((ln.get("kind", "other"), f"{name[:1].upper()}{name[1:]} {tail}."))
     why.append(f"이어지는 선: {len(lines)}개")

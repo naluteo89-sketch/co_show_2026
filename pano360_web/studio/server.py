@@ -44,6 +44,7 @@ def create_app(cfg, keys) -> web.Application:
         web.post(att + "/repaste", st.repaste_photo),
         web.post(att + "/text_keep", st.text_keep),
         web.post(run + "/clean_people", st.clean_people),
+        web.post(run + "/refs", st.add_refs),
         web.post(att + "/to_viewer", st.to_viewer),
         # 5단계: 영상화 (일부만 움직임)
         web.post(att + "/motion", st.motion_plan),

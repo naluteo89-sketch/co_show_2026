@@ -65,6 +65,74 @@ def photo_erp(img: Image.Image, yaw, pitch, hfov, vfov=None, W=8192, H=4096, fea
     return Image.fromarray(rgb, "RGB"), Image.fromarray(msk, "L").convert("RGB")
 
 
+def photo_point_dir(fx, fy, yaw, pitch, hfov, aspect, vfov=None):
+    """사진 안 한 점 (fx, fy: 0~1, 왼쪽 위 0) → 360 방향 (yaw°, pitch°). photo_coords / plane_uv 의 역변환."""
+    th = math.tan(math.radians(hfov) / 2)
+    tv = math.tan(math.radians(vfov) / 2) if vfov else th * aspect
+    u, v = fx * 2 - 1, 1 - fy * 2
+    x, y, z = u * th, v * tv, 1.0
+    n = math.sqrt(x * x + y * y + 1)
+    x, y, z = x / n, y / n, z / n
+    cy, sy, cp, sp = math.cos(math.radians(yaw)), math.sin(math.radians(yaw)), math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
+    dy = y * cp + z * sp
+    z1 = -y * sp + z * cp
+    dx, dz = x * cy + z1 * sy, -x * sy + z1 * cy
+    return math.degrees(math.atan2(dx, dz)), math.degrees(math.asin(max(-1.0, min(1.0, dy))))
+
+
+def text_region_dirs(photo_size, regions, yaw, pitch, hfov, vfov=None, W=8192, H=4096):
+    """글자 상자(사진 비율) → 360 위치: 가운데 yaw/pitch, 사진 정면 기준 좌우 차이, 각 크기, 8K ERP 픽셀 상자.
+    HMD(Quest) 는 ERP 가운데(yaw 0)를 처음 정면으로 봄 → yaw 는 그 기준 (오른쪽 +, 위 +)."""
+    sw, sh = photo_size
+    aspect = sh / sw
+    out = []
+    for i, r in enumerate(regions or []):
+        b = (r or {}).get("box") or []
+        if len(b) != 4:
+            continue
+        x0, y0, x1, y1 = [float(t) for t in b]
+        cyaw, cpit = photo_point_dir((x0 + x1) / 2, (y0 + y1) / 2, yaw, pitch, hfov, aspect, vfov)
+        pts = [photo_point_dir(fx, fy, yaw, pitch, hfov, aspect, vfov) for fx in (x0, x1) for fy in (y0, y1)]
+        ys = [p[0] for p in pts]
+        if max(ys) - min(ys) > 180:                      # 360 경계(±180°)를 걸친 상자
+            ys = [y + 360 if y < 0 else y for y in ys]
+        ps = [p[1] for p in pts]
+        px = [((y / 360 + 0.5) % 1.0) * W for y in (min(ys), max(ys))]
+        py = [(0.5 - p / 180) * H for p in (max(ps), min(ps))]
+        out.append({"index": i, **{k: r[k] for k in ("text", "script", "name", "role") if k in r},
+                    "yaw": round(cyaw, 2), "pitch": round(cpit, 2), "yaw_from_photo": round(cyaw - yaw, 2),
+                    "size_deg": [round(max(ys) - min(ys), 2), round(max(ps) - min(ps), 2)],
+                    "erp_px": [int(px[0]), int(py[0]), int(px[1]), int(py[1])]})
+    return out
+
+
+def layout_360(photo_size, objects, yaw, pitch, hfov, vfov=None, W=8192):
+    """360 배치 기록: 사진이 덮는 yaw 범위 + 사진 속 물체 위치 + 사진 밖(생성) 구역 yaw 범위 (HMD 정면 = yaw 0)."""
+    sw, sh = photo_size
+    left, _ = photo_point_dir(0.0, 0.5, yaw, pitch, hfov, sh / sw, vfov)
+    right, _ = photo_point_dir(1.0, 0.5, yaw, pitch, hfov, sh / sw, vfov)
+    top = photo_point_dir(0.5, 0.0, yaw, pitch, hfov, sh / sw, vfov)[1]
+    bot = photo_point_dir(0.5, 1.0, yaw, pitch, hfov, sh / sw, vfov)[1]
+    gap = 360 - (right - left)
+    return {"front": "HMD 처음 정면 = yaw 0 (8K ERP 가운데 x=%d)" % (W // 2),
+            "photo": {"yaw": [round(left, 1), round(right, 1)], "pitch": [round(bot, 1), round(top, 1)]},
+            "generated": {"right_side": [round(right, 1), round(right + gap / 3, 1)],
+                          "behind": [round(right + gap / 3, 1), round(right + 2 * gap / 3, 1)],
+                          "left_side": [round(right + 2 * gap / 3 - 360, 1), round(left, 1)]},
+            "objects": text_region_dirs(photo_size, objects, yaw, pitch, hfov, vfov, W=W, H=W // 2)}
+
+
+def subject_front_yaw(photo_size, objects, pitch, hfov, vfov=None, limit=60.0):
+    """주인공(main_subject) 상자 가운데가 HMD 정면(yaw 0)에 오도록 하는 사진 yaw. 없으면 None."""
+    sw, sh = photo_size
+    for o in objects or []:
+        b = (o or {}).get("box") or []
+        if o.get("role") == "main_subject" and len(b) == 4:
+            off, _ = photo_point_dir((b[0] + b[2]) / 2, (b[1] + b[3]) / 2, 0.0, pitch, hfov, sh / sw, vfov)
+            return round(max(-limit, min(limit, -off)), 1) + 0.0
+    return None
+
+
 def photo_quality_ratio(photo_w, hfov, final_w=8192) -> float:
     """원본 사진의 1°당 픽셀 / 최종 ERP 의 1°당 픽셀 (1 이상이면 원본이 최종보다 선명)."""
     return (float(photo_w) / max(1e-3, float(hfov))) / (float(final_w) / 360.0)

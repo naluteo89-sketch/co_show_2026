@@ -11,14 +11,48 @@ TRIGGER = ("Fill the green spaces according to the image. Outpaint as a seamless
 # 고정 문구도 '사진 설명' 처럼: 이 모델은 읽은 명사를 그대로 그리므로 photo·seam·band·camera·viewer 같은 말은 넣지 않음
 LIGHT_TMPL = "{Lighting} falls evenly everywhere; {lighting_detail}."
 TAIL = "Photorealistic, true-to-life colors, fine natural detail."
+# 원본 요소 최대 보존 (사용자, 11-05): 사진 자리는 그대로, 바깥만 같은 종류의 것으로 이어감 — 본 프롬프트 트리거 바로 뒤
+#  → 물건 이름(건물·물 등)을 늘어놓지 않음: 사진에 없는 것도 이름만 나오면 그려짐 · 부정문도 증류 모델은 못 알아들음
+KEEP_PHOTO = ("Keep everything in the photo exactly as it is, with the same shapes, colors, light and positions. "
+              "Only continue the scene outward with the same kinds of things that are already in it.")
+# 구조물은 사람이 만든 것처럼 · 마감 처리 (사용자 11-05) — 사진에 구조물이 있을 때만 (없는 곳에 구조물 생기지 않게)
+STRUCT_POS = ("Every man-made structure is built like the real thing, with straight edges, level lines, right angles, "
+              "evenly spaced parts and cleanly finished ends that stop at a post, corner, step or wall.")
+STRUCT_NEG = ("melted structures, warped railings, bent posts, wavy straight lines, uneven spacing, unfinished ends, "
+              "railings fading out, broken walls, floating fragments, half-built structures, distorted roofs")
+_BUILT_ROLES = ("structure", "path")
+_BUILT_LINES = ("road", "path", "walkway", "railing", "fence", "wall", "bridge_deck")
+
+
+def _has_built(a: dict) -> bool:
+    if any((o or {}).get("role") in _BUILT_ROLES for o in (a.get("objects") or [])):
+        return True
+    if a.get("text_regions"):
+        return True
+    f = a.get("facts") or {}
+    return any((ln or {}).get("kind") in _BUILT_LINES for ln in (f.get("lines") or []))
+
+
+# 새로 생기는 글자는 한글만 (사용자 11-05) — 본·뒤쪽 공통
+HANGUL_NEW = "Any lettering that appears in the newly generated areas is written only in Korean Hangul."
+# 주변 색 맞춤 (사용자 11-05): 생성 부분 색·화이트밸런스·밝기·대비를 사진과 같게 — 본·뒤쪽 프롬프트 공통
+COLOR_MATCH = "The new areas use exactly the same colors, white balance, brightness and contrast as the photo."
+KEEP_PHOTO_NEG = ("altered architecture, redesigned buildings, moved buildings, extra buildings, duplicated structures, "
+                  "changed layout, changed ground surface, changed water, new objects, removed objects, distorted shapes, "
+                  "warped roofs, different sky in the photo area")
 
 NEG_COMMON = ("inconsistent lighting, different time of day, exposure mismatch, brightness gradient, color shift, "
               "color cast, green tint, desaturated area, visible seams, mismatched lighting, repeated textures, "
               "warped perspective, blurry edges, low quality, out of frame, floating objects, mismatched colors, "
-              "hard edges, text, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, "
+              "hard edges, captions, watermark, worst quality, blurry, ugly, split screen, collage, frame, "
               "black borders, broken horizon, duplicated objects, HDR look, oversharpened, oversaturated, "
               "overexposed sky, blown-out highlights, halos around edges, painterly texture, smeared ground, swirl at the bottom")
 # 사람은 규칙으로 절대 안 나옴 → 모든 네거티브(본·이음새·리파인)에 항상 넣음 (증류 모델은 NAGuidance 로 네거티브 적용)
+# 글자 규칙 (사용자): 사진 속 글자는 무조건 보존 · 글자는 한국어가 주, 영어가 보조 (모든 사진이 한국)
+#  → 'text' 를 통째로 금지하면 원본 간판·현판 글자까지 지워짐 → 새로 생기는 글자·외국 문자만 금지
+NEW_TEXT_NEG = ("new signs, added lettering, gibberish text, garbled letters, misspelled Korean, random symbols, "
+                "logos, banners, posters")
+FOREIGN_TEXT_NEG = "Chinese characters, Japanese kana, Cyrillic letters, Arabic script, Thai script"
 NO_PEOPLE_NEG = ("people, person, man, woman, child, crowd, pedestrians, tourists, visitors, hikers, "
                  "human figures, silhouettes of people, small distant figures")
 # 이음새 복원: '세로 이음새·띠·경계' 를 말하면 그 선을 그림 → 이어지는 풍경만 설명 (트리거 문장은 유지)
@@ -111,12 +145,20 @@ STEP 1 - "observed": read the photo carefully and record only what you can actua
   (e.g. "people", "second pavilion", "extra bridge", "beach sand", "boats", "buildings on the shore").
 
 """ + rules.FACTS_GUIDE + """
-STEP 2 - prompt fields, written from STEP 1 only:
+REFERENCE PHOTOS (when given): other photos of the same place with a similar view. The MAIN photo is the first
+image; every box, horizon, hfov, edge, text_region, object and the main subject come from the MAIN photo only. Use the
+reference photos to describe what really lies around and behind it (the buildings, trees, walls, paths, water,
+hills, ground and sky you can see there) so surroundings, behind, ground_below and sky_above are complete and true
+to the place. Never move a thing from a reference photo into the main photo's area or invent a second main subject.
+
+STEP 2 - prompt fields, written from STEP 1 only (plus the reference photos for what lies around):
 - scene: 30-60 words, natural flowing sentences. The place and the main subject as they look, with real materials, colors and
   details. Name the place only if clearly identifiable. Refer to things that appear once in the singular
   ("a pavilion", never "pavilions"). Never mention people, visitors, crowds or activities: the generated
   world must stay empty of people (people already in the photo stay as they are).
-- surroundings: 30-55 words, natural flowing sentences (not instructions like "extend" or "continue the"). What is
+- surroundings: 35-65 words, natural flowing sentences (not instructions like "extend" or "continue the"). First what
+  lies just past the photo's left and right borders, with the same materials, heights, colors and light as the
+  things cut by the borders, so the photo blends into the new areas without any break; then what is
   to the left and to the right, at a distance (behind is the next field): the left_edge / right_edge things (trees, walls, fences, buildings,
   water, hills ...) continued with the same kind, size and spacing as in the photo, so the world feels full, not empty.
   For every continuous line in the photo (road, path, railing, fence, wall, shoreline, power line, bridge deck),
@@ -152,10 +194,21 @@ STEP 2 - prompt fields, written from STEP 1 only:
   scale 1.0 = true size: close buildings, gates, towers, interiors, strong converging lines, tilted shots, people-height
   close objects. 1.2-1.4 = mid-distance scenes (a street, a courtyard seen from afar, an avenue). 1.5-1.7 = wide open far
   views where stretching is invisible (sea, mountains, fields, sky, distant skyline). reason = one short Korean sentence.
-- text_regions: every sign, signboard, hanging name board (hyeonpan) or painted lettering in the photo whose letters
+- objects: the main things in the photo, max 8, each with its own box [x0, y0, x1, y1] (photo fractions, 0 = left/top):
+  exactly one role "main_subject" (the main_subject above), then the other large structures, tree groups, paths,
+  water or mountains (2-5 word names). The code turns every box into a 360 direction (where it sits around the viewer
+  in the HMD) so the panorama keeps them in place.
+- text_regions: one entry PER separate lettering area (each board, sign, plaque, banner, stele face, painted word) —
+  a photo often has several in different scripts (a hanja name board plus Hangul signs plus English); list each one
+  with its own box. Every sign, signboard, hanging name board (hyeonpan) or painted lettering in the photo whose letters
   (Korean or any script) are readable. box = [x0, y0, x1, y1] as fractions of the photo width/height (0 = left/top,
-  1 = right/bottom), tight around the lettering and its board; text = the letters as written. [] if none.
+  1 = right/bottom), tight around the lettering and its board; text = the letters EXACTLY as written, character by
+  character, in their own script (hanja stays hanja, e.g. "紫霞門"; Hangul stays Hangul; English stays English) —
+  never translate, romanize or guess; leave out letters you cannot read clearly. [] if none.
   These areas are restored from the original photo afterwards so the real letters stay readable.
+  Every photo is in South Korea: lettering is Korean Hangul first, English second. Temples, palaces, shrines,
+  Confucian academies and old gates (e.g. Bulguksa, Seoraksan temple halls) carry hanja name boards: keep them hanja.
+  Never invent sign words in the prompt sentences; the code adds the exact original letters from text_regions itself.
 - summary_ko / tips_ko: Korean, for the operator. tips_ko: risks for this photo and what to adjust.
 
 Style: English, concrete visual nouns, materials and colors. No camera/lens jargon, no style words like
@@ -216,10 +269,17 @@ SCHEMA = {
             "type": "object", "additionalProperties": False,
             "properties": {"box": {"type": "array", "items": {"type": "number"}}, "text": {"type": "string"}},
             "required": ["box", "text"]}},
+        "objects": {"type": "array", "items": {                  # 360 배치: 사진 속 주요 물체 위치 (사진 비율 좌표)
+            "type": "object", "additionalProperties": False,
+            "properties": {"name": {"type": "string"},
+                           "role": {"type": "string", "enum": ["main_subject", "structure", "nature", "path", "water",
+                                                               "other"]},
+                           "box": {"type": "array", "items": {"type": "number"}}},
+            "required": ["name", "role", "box"]}},
     },
     "required": ["observed", "facts", "scene", "surroundings", "behind", "ground_below", "sky_above", "lighting", "lighting_detail",
                  "lighting_short", "lighting_negatives", "content_negatives", "seam_elements", "horizon_y",
-                 "hfov_estimate", "summary_ko", "tips_ko", "enlarge", "text_regions"],
+                 "hfov_estimate", "summary_ko", "tips_ko", "enlarge", "text_regions", "objects"],
 }
 
 
@@ -298,6 +358,8 @@ def _sentence(t: str) -> str:
 def _phrase(t: str) -> str:
     """문장 중간에 들어갈 구절: 끝 마침표 빼고 첫 글자 소문자 (고유명사는 LLM 이 앞에 두지 않게 요청)."""
     t = (t or "").strip().rstrip(" .;,")
+    if _re.match(r"(A|An|The) ", t):                   # 'Underfoot is A broad…' 방지
+        return t[:1].lower() + t[1:]
     return t[:1].lower() + t[1:] if t[:2] != t[:2].upper() else t
 
 
@@ -314,7 +376,7 @@ def _prep(a: dict) -> dict:
     a = dict(a)
     o = a.get("observed") or {}
     # 안전 상한만 (LLM 에 요청한 길이보다 넉넉히 — LLM 답이 잘리지 않고 그대로 들어가게)
-    lim = {"scene": 75, "surroundings": 70, "behind": 50, "ground_below": 18, "sky_above": 20, "lighting": 14, "lighting_detail": 14,
+    lim = {"scene": 75, "surroundings": 80, "behind": 50, "ground_below": 18, "sky_above": 20, "lighting": 14, "lighting_detail": 14,
            "lighting_short": 4, "seam_elements": 30}
     for k, n in lim.items():
         if k in a:
@@ -379,6 +441,14 @@ def _constraints(a: dict, with_subject: bool = True) -> str:
         out.append(f"There is {num} {subj} here")   # 'structure'·'photo' 같은 명사를 덧붙이면 오히려 그림
     # 사람: 규칙으로 절대 없음 ('people' 단어는 Positive 에 넣으면 오히려 그림 → 상태로만 서술)
     out.append("The place is quiet and deserted")
+    # 글자 보존: 사진에 글자가 있을 때만 말함 (글자 이야기를 하면 없는 글자를 그릴 수 있음)
+    if with_subject and a.get("text_regions"):           # 뒤쪽 프롬프트엔 안 넣음 (뒤에 간판이 새로 생기지 않게)
+        # 원본 글자를 LLM 이 읽은 그대로 넣음 (사용자 11-05: 법당·문 현판 한자는 한자로 보존)
+        for t in _text_lines(a):
+            out.append(t)
+        out.append("Every existing sign and name board keeps its original letters exactly as in the photo")
+        if not _has_hanja(a):
+            out.append("Their lettering is Korean Hangul, with English only as a secondary language")
     if not o.get("haze_present", False):
         out.append("The air is clear")
     return " ".join(_sentence(x) for x in out)
@@ -394,10 +464,68 @@ def _ground_mistake(a: dict) -> str:
     return "" if gx.lower() in real else gx
 
 
+def _script(t: str) -> str:
+    han = bool(_re.search(r"[\u3400-\u9fff]", t)); kor = bool(_re.search(r"[\uac00-\ud7a3]", t))
+    lat = bool(_re.search(r"[A-Za-z]", t))
+    if han and not kor:
+        return "in traditional Chinese hanja characters"
+    if kor and lat:
+        return "in Korean Hangul with English"
+    if kor:
+        return "in Korean Hangul"
+    if lat:
+        return "in English letters"
+    return ""
+
+
+def _text_lines(a: dict, limit: int = 8) -> list:
+    """text_regions → 'The name board at the upper right reads "紫霞門" in traditional Chinese hanja characters.'"""
+    out = []
+    for r in (a.get("text_regions") or [])[:limit]:
+        if not isinstance(r, dict):
+            continue
+        t = _re.sub(r"\s+", " ", str(r.get("text") or "")).strip().strip('"')
+        if not t or len(t) > 24:
+            continue
+        b = r.get("box") or []
+        where = ""
+        d = r.get("dir") or {}
+        if d:                                              # 360 위치 기준 (HMD 에서 보는 방향): 사진 정면 대비 좌우·눈높이 대비 위아래
+            dy, p = float(d.get("yaw_from_photo", 0)), float(d.get("pitch", 0))
+            h = ("straight ahead" if abs(dy) < 8 else
+                 ("slightly to the right" if dy > 0 else "slightly to the left") if abs(dy) < 25 else
+                 ("to the right" if dy > 0 else "to the left"))
+            v = ("high above eye level" if p > 35 else "above eye level" if p > 12 else
+                 "below eye level" if p < -12 else "at eye level")
+            where = f" {h}, {v},"
+        elif len(b) == 4:
+            cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+            h = "left" if cx < 0.33 else "right" if cx > 0.66 else "center"
+            v = "upper " if cy < 0.4 else "lower " if cy > 0.66 else ""
+            where = f" at the {v}{h}" if (v or h != "center") else " in the center"
+        han = _script(t)
+        kind = "name board" if "hanja" in han else "sign"
+        out.append(f'The {kind}{where} reads "{t}" {han}'.rstrip())
+    return out
+
+
+def _has_hanja(a: dict) -> bool:
+    return any(_re.search(r"[\u3400-\u9fff]", str(t.get("text") or "")) for t in (a.get("text_regions") or []))
+
+
+def _foreign_text_neg(a: dict) -> str:
+    """한국 사진: 외국 문자 금지. 원본 현판에 한자가 있으면 한자는 빼고 (원본 글자 보존)."""
+    if _has_hanja(a):
+        return "Japanese kana, Cyrillic letters, Arabic script, Thai script"
+    return FOREIGN_TEXT_NEG
+
+
 def _guard_negatives(a: dict) -> str:
     o = a.get("observed") or {}
     out = [_clean(x, 6) for x in (o.get("absent") or [])]
     out.append(NO_PEOPLE_NEG)                             # 분석 형식과 관계없이 항상
+    out.append(NEW_TEXT_NEG)                              # 새 글자 금지 (원본 글자는 보존)
+    out.append(_foreign_text_neg(a))
     subj = _clean(o.get("main_subject") or "", 6)
     if subj and subj.lower() not in ("none", "n/a"):
         out.append(f"second {subj}, duplicate {subj}")
@@ -407,13 +535,64 @@ def _guard_negatives(a: dict) -> str:
     return ", ".join(x for x in out if x)
 
 
+# 글자 다시 읽기: 분석 그림은 짧은 변 768 로 줄어 작은 글자를 못 읽음 → 상자마다 원본 해상도로 잘라 따로 읽힘
+TEXT_READ_SYSTEM = """You read lettering in crops of a photo taken in South Korea. For each numbered crop, transcribe
+the letters EXACTLY as written, character by character, in their own script: hanja stays hanja (temple, palace, shrine,
+academy and old gate name boards are usually hanja, e.g. 紫霞門), Hangul stays Hangul, English stays English.
+Never translate, romanize, correct or guess. If several separate words or boards are in one crop, give them all,
+separated by " / ". Characters you cannot read clearly are left out; if nothing is readable, text = "" and
+script = "unreadable". Reading order: hanja name boards are often written right-to-left — give them in the board's
+natural reading order as Koreans read it."""
+TEXT_READ_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["items"],
+    "properties": {"items": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["index", "text", "script"],
+        "properties": {"index": {"type": "integer"}, "text": {"type": "string"},
+                       "script": {"type": "string", "enum": ["hangul", "hanja", "english", "mixed", "unreadable"]}}}}}}
+
+
+def text_crops(img, regions, pad=0.15, min_px=96):
+    """text_regions 상자 → 원본 해상도 잘라낸 그림 목록 (상자 순서 그대로)."""
+    W, H = img.size
+    out = []
+    for r in regions:
+        b = (r or {}).get("box") or []
+        if len(b) != 4:
+            out.append(None)
+            continue
+        x0, y0, x1, y1 = [float(v) for v in b]
+        w, h = max(1e-3, x1 - x0), max(1e-3, y1 - y0)
+        x0, x1 = max(0.0, x0 - w * pad), min(1.0, x1 + w * pad)
+        y0, y1 = max(0.0, y0 - h * pad), min(1.0, y1 + h * pad)
+        L, T, R, B = int(x0 * W), int(y0 * H), int(x1 * W), int(y1 * H)
+        if R - L < min_px:
+            c = (L + R) // 2; L, R = max(0, c - min_px // 2), min(W, c + min_px // 2)
+        if B - T < min_px:
+            c = (T + B) // 2; T, B = max(0, c - min_px // 2), min(H, c + min_px // 2)
+        out.append(img.crop((L, T, R, B)))
+    return out
+
+
+def apply_text_reads(a: dict, items: list) -> None:
+    """상자별 다시 읽은 글자로 text_regions 갱신 (원래 읽은 글자는 text_first 로 남김)."""
+    regs = a.get("text_regions") or []
+    for it in items or []:
+        i = it.get("index")
+        if not isinstance(i, int) or not (0 <= i < len(regs)):
+            continue
+        regs[i]["text_first"] = regs[i].get("text", "")
+        regs[i]["text"] = (it.get("text") or "").strip()
+        regs[i]["script"] = it.get("script", "")
+
+
 def assemble(a: dict) -> dict:
     """LLM 재료 → 최종 4개 프롬프트. 생성 모델이 잘 따르도록 정해진 순서의 짧은 문장으로 정리:
     트리거 → 장면(주인공) → 주변·뒤 → 발밑 → 머리 위 → 분위기·빛 → 꼭 지킬 것 → 화질."""
     a = _prep(a)
     o = a.get("observed") or {}
     # 'All around:' 'Mood:' 같은 표제어 대신 이어지는 설명문 (표제어·목록체는 모델이 장면을 딱딱하게 나눠 그림)
-    parts = [TRIGGER, _sentence(a["scene"])]
+    built = _has_built(a)
+    parts = [TRIGGER, KEEP_PHOTO, COLOR_MATCH, HANGUL_NEW, STRUCT_POS if built else "", _sentence(a["scene"])]
     if a.get("surroundings"):
         parts.append(_sentence(a["surroundings"]))
     behind = _sentence(a["behind"]) if a.get("behind") else ""
@@ -427,7 +606,7 @@ def assemble(a: dict) -> dict:
         # 'not X' 는 넣지 않음: 증류 모델(CFG 1)은 부정을 못 알아듣고 X(예: beach sand)를 오히려 그림 → X 는 네거티브에만
         common.append(_sentence("Underfoot is " + _phrase(a["ground_below"])))
     if a.get("sky_above"):
-        common.append(_sentence("Overhead is " + _phrase(a["sky_above"])))
+        common.append(_sentence("Overhead is " + _re.sub(r"\s+overhead\b", "", _phrase(a["sky_above"]), count=1)))
     if o.get("atmosphere"):
         common.append(_sentence("The atmosphere is " + _phrase(_clean(o["atmosphere"], 8))))
     light = _phrase(a["lighting"]) or "natural daylight"
@@ -445,9 +624,10 @@ def assemble(a: dict) -> dict:
     if behind:
         # 선 문장은 뒤쪽 묘사 기준으로 다시 계산 (본 프롬프트 주변 묘사에 있던 길 이어짐이 뒤쪽 프롬프트에선 빠지던 문제)
         ls_back = rules.line_sentences(a.get("rules") or {}, behind)
-        back_positive = " ".join(x for x in [TRIGGER, behind, ls_back, *common, _constraints(a, with_subject=False), TAIL] if x)
+        back_positive = " ".join(x for x in [TRIGGER, COLOR_MATCH, HANGUL_NEW, STRUCT_POS if built else "", behind, ls_back, *common, _constraints(a, with_subject=False), TAIL] if x)
     guards = _guard_negatives(a)
-    negative = _join([", ".join(a["lighting_negatives"]), NEG_COMMON, ", ".join(a["content_negatives"]), guards])
+    negative = _join([", ".join(a["lighting_negatives"]), NEG_COMMON, ", ".join(a["content_negatives"]), guards,
+                      KEEP_PHOTO_NEG, STRUCT_NEG if built else ""])
     seam_positive = SEAM_POS_TMPL.format(seam_elements=_phrase(a["seam_elements"]),
                                          lighting_short=_phrase(a["lighting_short"]) or "light")
     seam_negative = _join([", ".join(a["lighting_negatives"]), SEAM_NEG_COMMON, guards])

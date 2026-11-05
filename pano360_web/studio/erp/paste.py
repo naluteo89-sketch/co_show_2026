@@ -91,6 +91,33 @@ def tone_match(final_img: Image.Image, photo: Image.Image, strength=0.6, chunk=5
     return to_image(out)
 
 
+def tone_match_region(final_img: Image.Image, photo: Image.Image, yaw, pitch, hfov, vfov=None, strength=0.8,
+                      chunk=512) -> Image.Image:
+    """주변 색 맞춤 (사용자 11-05): 생성 결과 안의 '사진 자리' 와 원본 사진을 같은 픽셀끼리 비교해서
+    모델이 바꾼 색·밝기·대비(화이트밸런스 포함)를 재고, 그 보정을 360 전체에 똑같이 적용.
+    → 사진 자리와 생성된 주변이 같은 색감이 됨 (예전 tone_match 는 하늘·땅 섞인 360 전체를 사진 평균에 맞춰 과보정)."""
+    if strength <= 0:
+        return final_img
+    from .control import photo_erp
+    W, H = 1024, 512
+    small = np.asarray(final_img.convert("RGB").resize((W, H), Image.BILINEAR), np.float32)
+    ref, m = photo_erp(photo, yaw, pitch, hfov, vfov, W=W, H=H, feather=0.15)
+    ref = np.asarray(ref, np.float32)
+    m = np.asarray(m.convert("L"), np.float32) / 255.0 > 0.5         # 사진 가장자리 빼고 안쪽만
+    if m.sum() < 500:
+        return tone_match(final_img, photo, strength)
+    g, p = _ycc(small[m]), _ycc(ref[m])
+    mu_g, sd_g = g.mean(0), g.std(0) + 1e-4
+    mu_p, sd_p = p.mean(0), p.std(0) + 1e-4
+    scale = np.clip(sd_p / sd_g, 0.7, 1.4)
+    out = np.asarray(final_img.convert("RGB"), np.float32).copy()
+    for r0 in range(0, out.shape[0], chunk):
+        blk = out[r0:r0 + chunk]
+        c2 = (_ycc(blk) - mu_g) * scale + mu_p
+        out[r0:r0 + chunk] = blk * (1 - strength) + _rgb(c2) * strength
+    return to_image(out)
+
+
 def photo_paste_mode(final_w: int, photo_w: int, hfov: float, mode="auto") -> tuple[str, float]:
     """원본 사진이 최종 해상도보다 흐리면 'detail'(원본 색·형태 + 결과의 선명한 디테일), 충분히 선명하면 'original'."""
     final_ppd = final_w / 360.0

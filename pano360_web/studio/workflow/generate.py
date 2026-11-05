@@ -14,7 +14,7 @@ SEAM_TRIGGER = ("Fill the green spaces according to the image. This is a 360 equ
 def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
           seed1=None, seed2=None, prefix="VR360/studio", settings: dict | None = None,
           keep_mask: str | None = None, wrap: dict | None = None, soft_lock: bool = False,
-          photo8k: dict | None = None) -> tuple[dict, dict]:
+          photo8k: dict | None = None, harmonize: dict | None = None) -> tuple[dict, dict]:
     """soft_lock: keep_mask 가 회색(사진 안쪽도 약하게 다시 그림)일 때 DifferentialDiffusion 을 1차 샘플러 모델에 검.
     photo8k: {"image": 8K 원본 투영 그림, "mask": 섞기 마스크} — 8K 업스케일 뒤·리파인 전에 사진 자리를 원본으로."""
     api = ui_to_api(copy.deepcopy(template_ui))
@@ -63,6 +63,10 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
         # 1차 생성 회전 디노이즈: 스텝마다 가로로 돌려 양 끝(0°/360°) 오차가 한 자리에 쌓이지 않게 (PanoWan RSD)
         if int(st.get("rotate_chunks", 0) or 0) > 1 and not keep_mask:
             rotated_first_pass(api, ids, s1, int(st["rotate_chunks"]))
+        if harmonize:                                      # 임시(11-05): 2K 에 원본 넣고 사진 둘레까지 약하게 다시 그림
+            harmonize_photo_2k(api, ids, harmonize, s1)
+        # 보존 모드: 2K 사진 자리가 이미 원본 → 8K 는 업스케일·리파인 뒤 '맨 마지막'에 원본 원래 해상도로 덮음(내용 같아 경계 없음)
+        # 보존 모드: 업스케일(117) 에 원본 8K 를 넓게 섞고 → 낮은 리파인으로 경계·질감을 녹임 → 마지막에 안쪽(core)만 원본으로 다시 덮음
         src8k = blend_photo_8k(api, photo8k) if photo8k else None
         rf = st.get("refine")
         attached = False
@@ -70,6 +74,12 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
             attached = attach_refine_to_generate(api, ids, {**rf, "seed": s1}, prompts, src=src8k)
         if src8k and not attached and "119" in api:
             api["119"]["inputs"]["image"] = src8k
+        if harmonize and photo8k and "119" in api:
+            last = api["119"]["inputs"].get("image")
+            if isinstance(last, list) and photo8k.get("core"):
+                fin = blend_photo_8k(api, {"image": photo8k["image"], "mask": photo8k["core"]}, src=last, base=9111)
+                if fin:
+                    api["119"]["inputs"]["image"] = fin
         return api, {"seed1": s1, "seed2": s2}
 
     # 이음새 복원: 띠를 초록(#00ff00)으로 칠해 아웃페인트 LoRA 방식으로 '채우기'
@@ -130,17 +140,54 @@ def lock_photo_region(api: dict, ids: dict, mask_image: str, soft: bool = False)
     return True
 
 
-def blend_photo_8k(api: dict, photo8k: dict, src_node: str = "117") -> list | None:
+def blend_photo_8k(api: dict, photo8k: dict, src_node: str = "117", src: list | None = None, base: int = 9101) -> list | None:
     """8K 업스케일 결과(117) 의 사진 자리를 원본 사진(원래 해상도로 투영한 8K) 으로 섞음 → 그 위에 리파인.
     2K 로 다시 그려 4배 늘린 사진 자리 대신 원본 디테일(건물 모양·글자)이 8K 에 들어가고,
     리파인(0.3)이 사진과 주변을 함께 다듬어 경계가 따로 놀지 않게 함."""
-    if src_node not in api or not photo8k.get("image") or not photo8k.get("mask"):
+    dest = src or [src_node, 0]
+    if dest[0] not in api or not photo8k.get("image") or not photo8k.get("mask"):
         return None
-    api["9101"] = node("LoadImage", {"image": photo8k["image"]}, "원본 사진 8K 투영 (원래 해상도)")
-    api["9102"] = node("LoadImageMask", {"image": photo8k["mask"], "channel": "red"}, "원본 사진 섞기 마스크 (가장자리 부드럽게)")
-    api["9103"] = node("ImageCompositeMasked", {"destination": [src_node, 0], "source": ["9101", 0], "mask": ["9102", 0],
-                                                "x": 0, "y": 0, "resize_source": False}, "8K 사진 자리 = 원본")
-    return ["9103", 0]
+    a, b, c = str(base), str(base + 1), str(base + 2)
+    api[a] = node("LoadImage", {"image": photo8k["image"]}, "원본 사진 8K 투영 (원래 해상도)")
+    api[b] = node("LoadImageMask", {"image": photo8k["mask"], "channel": "red"}, "원본 사진 섞기 마스크 (가장자리 부드럽게)")
+    api[c] = node("ImageCompositeMasked", {"destination": dest, "source": [a, 0], "mask": [b, 0],
+                                           "x": 0, "y": 0, "resize_source": False}, "8K 사진 자리 = 원본")
+    return [c, 0]
+
+
+def harmonize_photo_2k(api: dict, ids: dict, h: dict, seed: int) -> bool:
+    """원본 보존 + 이질감 없게 (사용자 제안·임시 적용 11-05):
+    2K 생성 결과(108, 원통 패스 뒤) 의 사진 자리에 원본 사진(2K 투영)을 넣고 → 사진과 둘레 영역만(region 마스크)
+    같은 모델로 약하게(denoise) 한 번 더 그림 → 사진 자리는 원본 형태·위치, 경계는 모델이 이어 그림.
+    h: {"image": 2K 원본 투영, "mask": 원본 넣을 마스크(가장자리 흐림), "region": 다시 그릴 범위(사진+둘레), "denoise"}"""
+    main = str(ids["sampler_main"])
+    if main not in api:                                  # 회전 디노이즈가 1차 샘플러(31)를 조각 샘플러로 바꾼 경우 → 원통 패스 샘플러 설정 사용
+        main = "1008"
+    if "108" not in api or main not in api or not h.get("image"):
+        print(f"[pano360] 보존 다시 그리기 못 넣음 (108:{'108' in api}, 샘플러:{main in api})")
+        return False
+    sm = api[main]["inputs"]
+    vae = [str(ids["vae"]), 0]
+    users = [(k, f) for k, n in api.items() for f, v in n.get("inputs", {}).items() if v == ["108", 0]]
+    api["9201"] = node("LoadImage", {"image": h["image"]}, "보존 · 원본 사진 2K 투영")
+    api["9202"] = node("LoadImageMask", {"image": h["mask"], "channel": "red"}, "보존 · 원본 넣을 곳 (가장자리 흐림)")
+    api["9203"] = node("ImageCompositeMasked", {"destination": ["108", 0], "source": ["9201", 0], "mask": ["9202", 0],
+                                                "x": 0, "y": 0, "resize_source": False}, "보존 · 사진 자리 = 원본")
+    api["9204"] = node("VAEEncode", {"pixels": ["9203", 0], "vae": vae}, "보존 · 인코드")
+    api["9205"] = node("LoadImageMask", {"image": h["region"], "channel": "red"}, "보존 · 다시 그릴 범위 (사진+둘레)")
+    api["9206"] = node("SetLatentNoiseMask", {"samples": ["9204", 0], "mask": ["9205", 0]}, "보존 · 범위만 다시 그림")
+    api["9207"] = node("ReferenceLatent", {"conditioning": [str(ids["positive"]), 0], "latent": ["9204", 0]},
+                       "보존 · 참조 (원본 넣은 그림)")
+    api["9208"] = ksampler(sm["model"], ["9207", 0], [str(ids["negative"]), 0], ["9206", 0], seed=int(seed) + 11,
+                           steps=sm.get("steps", 20), cfg=sm.get("cfg", 4.0), denoise=float(h.get("denoise", 0.4)),
+                           sampler_name=sm.get("sampler_name", "euler"), scheduler=sm.get("scheduler", "simple"),
+                           title="보존 · 사진과 둘레를 약하게 다시 그림 (경계 이어 그리기)")
+    api["9209"] = node("VAEDecode", {"samples": ["9208", 0], "vae": vae}, "보존 · 디코드")
+    api["9210"] = node("ImageCompositeMasked", {"destination": ["108", 0], "source": ["9209", 0], "mask": ["9205", 0],
+                                                "x": 0, "y": 0, "resize_source": False}, "보존 · 범위 밖은 그대로")
+    for k, f in users:
+        api[k]["inputs"][f] = ["9210", 0]
+    return True
 
 
 def wrap_shift_for(yaw: float, W: int) -> tuple[int, float]:

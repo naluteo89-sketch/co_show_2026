@@ -25,18 +25,21 @@ def image_data_url(img: Image.Image, max_side=1536, short_side=768, quality=85):
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def request_body(model, img, note=""):
+def request_body(model, img, note="", refs=None):
     user_text = "Analyze this photo for 360 outpainting."
     if note:
         user_text += f"\nOperator note (may be Korean): {note}"
+    content = [{"type": "input_text", "text": user_text},
+               {"type": "input_image", "image_url": image_data_url(img), "detail": "high"}]
+    for i, r in enumerate(refs or []):                   # 같은 장소 다른 사진: 주변 묘사 참고만
+        content += [{"type": "input_text", "text": f"Reference photo {i + 1} of the same place (similar view, taken "
+                                                   f"nearby). Use it ONLY to describe the surroundings:"},
+                    {"type": "input_image", "image_url": image_data_url(r), "detail": "high"}]
     return {
         "model": model,
         "input": [
             {"role": "system", "content": llm.SYSTEM},
-            {"role": "user", "content": [
-                {"type": "input_text", "text": user_text},
-                {"type": "input_image", "image_url": image_data_url(img), "detail": "high"},
-            ]},
+            {"role": "user", "content": content},
         ],
         "text": {"format": {"type": "json_schema", "name": "pano_prompt", "strict": True, "schema": llm.SCHEMA}},
     }
@@ -109,9 +112,23 @@ class OpenAIClient:
                 raise RuntimeError(f"OpenAI {r.status}: {json.dumps(data.get('error', data), ensure_ascii=False)}")
         return parse_response(data), data.get("usage")
 
-    async def analyze(self, img: Image.Image, note: str = "", model: str | None = None) -> tuple[dict, dict]:
-        """사진 → (LLM 재료 JSON, usage). model 을 주면 그 모델로, 아니면 기본 모델로."""
-        return await self._request(request_body(model or self.model, img, note))
+    async def analyze(self, img: Image.Image, note: str = "", model: str | None = None, refs=None) -> tuple[dict, dict]:
+        """사진 → (LLM 재료 JSON, usage). refs = 같은 장소 비슷한 구도 사진들(주변 묘사 참고)."""
+        return await self._request(request_body(model or self.model, img, note, refs))
+
+    async def read_texts(self, crops, model=None):
+        """글자 상자마다 원본 해상도 조각 → [{index, text, script}] (작은 현판·간판 글자를 정확히)."""
+        content = [{"type": "input_text", "text": f"{len(crops)} crops follow. Read each one."}]
+        for i, c in enumerate(crops):
+            if c is None:
+                continue
+            content += [{"type": "input_text", "text": f"Crop {i}:"},
+                        {"type": "input_image", "image_url": image_data_url(c, 1024, 1024), "detail": "high"}]
+        body = {"model": model or self.model,
+                "input": [{"role": "system", "content": llm.TEXT_READ_SYSTEM}, {"role": "user", "content": content}],
+                "text": {"format": {"type": "json_schema", "name": "text_read", "strict": True,
+                                    "schema": llm.TEXT_READ_SCHEMA}}}
+        return await self._request(body)
 
     async def review(self, views_img, photo=None, context="", model=None):
         """2K 초안 검수 → (JSON, usage)."""
