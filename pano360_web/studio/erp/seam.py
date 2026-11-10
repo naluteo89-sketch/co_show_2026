@@ -77,10 +77,27 @@ def match_wrap_tone(img_path, width=384, probe=48, smooth=96) -> float:
         return gap
     x = np.arange(width, dtype=np.float32)
     ramp = (0.5 * (1 + np.cos(np.pi * x / width)))[None, :, None]       # 이음새 1 → width 0
+    before = _wrap_ratio(im)
     im[:, :width] += 0.5 * D[:, None, :] * ramp                          # 왼쪽 앞은 오른쪽 끝 쪽으로
     im[:, W - width:] -= 0.5 * D[:, None, :] * ramp[:, ::-1]             # 오른쪽 끝은 왼쪽 앞 쪽으로
+    # 11-06: 8K 에서 probe 폭 평균은 이음새가 아니라 양쪽 풍경 차이를 재서 오히려 단차를 키움 (예: 1.6 → 3.3)
+    # → 보정 뒤 이음새가 나빠지면 파일을 그대로 둠
+    if _wrap_ratio(im) >= before:
+        return gap
     Image.fromarray(np.clip(im + 0.5, 0, 255).astype(np.uint8)).save(img_path)
     return gap
+
+
+def _wrap_ratio(im) -> float:
+    """좌우 끝 열 차이 / 일반 이웃 열 차이 (밝기, 위아래 15% 제외)."""
+    a = im.mean(2) if im.ndim == 3 else im
+    H = a.shape[0]
+    a = a[int(H * 0.15):int(H * 0.85)]
+    wrap = float(np.abs(a[:, 0] - a[:, -1]).mean())
+    W = a.shape[1]
+    xs = [W // 8 * k for k in range(1, 8)]
+    normal = float(np.median([np.abs(a[:, x] - a[:, x + 1]).mean() for x in xs])) + 1e-3
+    return wrap / normal
 
 
 def wrap_seam_score(img_path) -> dict:

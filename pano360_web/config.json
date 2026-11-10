@@ -40,6 +40,11 @@
   "default_yaw": -20,
   "hmd_front": "subject",
   "photo_harmonize": {"enabled": false, "denoise": 0.4, "feather": 0.12, "region_pad": 0.35, "region_feather": 0.3, "final_8k": true, "final_feather": 0.12, "refine_denoise": 0.15, "core": 0.85, "core_feather": 0.15},
+  "people_green": {"enabled": true, "people_pad": 0.15},
+  "edge_lock": {"enabled": false, "band": 0.24, "keep_band": 0.06, "people_pad": 0.15},
+  "c_form": {"enabled": false, "r1_extra": 55, "r2": 140, "overlap_full": 10, "overlap_ramp": 15},
+  "text_8k": {"enabled": false, "pad": 0.15, "soft": 0.02},
+  "refine_mask": {"enabled": false, "photo": 0.33, "text_pad": 0.25},
   "wrap_in_photo": false,
   "review": {"enabled": false, "max_tries": 3},
   "node_ids": {

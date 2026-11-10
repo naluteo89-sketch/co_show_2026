@@ -105,7 +105,7 @@ def _tiles(size, tile, overlap):
 
 def add_refine(wf: dict, src: list, W: int, H: int, *, unet: str, clip: str, vae: str, positive: str,
                negative: str, seed=0, steps=20, cfg=4.0, denoise=0.3, tile=1536, overlap=192,
-               id_base=400, wrap=True) -> list:
+               id_base=400, wrap=True, mask: str | None = None) -> list:
     """wf 에 타일 리파인 노드를 추가하고 최종 이미지 참조를 반환. unet/clip/vae 는 기존 로더 노드 id."""
     k = id_base
     def nid():
@@ -129,6 +129,12 @@ def add_refine(wf: dict, src: list, W: int, H: int, *, unet: str, clip: str, vae
         src = [p3, 0]
         W = W + E
     canvas = src
+    model = [unet, 0]
+    if mask:                                     # 11-06: 영역별 세기 (생성 1 · 사진 안쪽 약하게 · 글자 0) — 이음새 패딩 포함 폭의 마스크
+        mk, dd = nid(), nid()
+        wf[mk] = node("LoadImageMask", {"image": mask, "channel": "red"}, "리파인 세기 마스크 (글자 0 · 사진 약하게)")
+        wf[dd] = node("DifferentialDiffusion", {"model": [unet, 0]}, "리파인 · 마스크 값만큼만 다시 그림")
+        model = [dd, 0]
     xs, ys = _tiles(W, tile, overlap), _tiles(H, tile, overlap)
     tw, th = min(tile, W), min(tile, H)
     for y in ys:
@@ -136,7 +142,13 @@ def add_refine(wf: dict, src: list, W: int, H: int, *, unet: str, clip: str, vae
             crop, enc, smp, dec, msk, fea, comp = (nid() for _ in range(7))
             wf[crop] = node("ImageCrop", {"image": src, "width": tw, "height": th, "x": x, "y": y}, f"리파인 타일 {x},{y}")
             wf[enc] = node("VAEEncode", {"pixels": [crop, 0], "vae": [vae, 0]}, "타일 인코드")
-            wf[smp] = ksampler([unet, 0], [pos, 0], [neg, 0], [enc, 0], seed=seed, steps=steps, cfg=cfg,
+            lat = [enc, 0]
+            if mask:
+                cm, sn = nid(), nid()
+                wf[cm] = node("CropMask", {"mask": [mk, 0], "x": x, "y": y, "width": tw, "height": th}, "타일 세기 마스크")
+                wf[sn] = node("SetLatentNoiseMask", {"samples": [enc, 0], "mask": [cm, 0]}, "타일 · 글자는 손대지 않음")
+                lat = [sn, 0]
+            wf[smp] = ksampler(model, [pos, 0], [neg, 0], lat, seed=seed, steps=steps, cfg=cfg,
                                denoise=denoise, title="리파인 샘플러")
             wf[dec] = node("VAEDecode", {"samples": [smp, 0], "vae": [vae, 0]}, "타일 디코드")
             wf[msk] = node("SolidMask", {"value": 1.0, "width": tw, "height": th}, "타일 마스크")

@@ -193,6 +193,72 @@ class GenerateMixin:
         img.save(path, optimize=False)
         return path
 
+    def _edge_mask(self, run_id, pl, meta, name, el):
+        """가장자리만 다시 그리기 마스크: 주인공·간판 상자는 지키고, 사람 상자는 다시 그려 지움."""
+        W, H = self.cfg.get("erp_size", [2048, 1024])
+        a = meta.get("analysis") or {}
+        keep = self._boxes(meta)[0]
+        m = erp.edge_lock_mask(self.source(run_id).size, *placement_args(pl), W, H, band=float(el.get("band", 0.24)),
+                               keep_boxes=[b for b in keep if b], people_boxes=a.get("people_boxes") or [],
+                               keep_band=float(el.get("keep_band", 0.06)), people_pad=float(el.get("people_pad", 0.15)))
+        path = self.store.path(run_id, name)
+        m.save(path)
+        return path
+
+    def _boxes(self, meta):
+        """분석 결과 → (가장자리 띠에서도 지킬 상자 = 글자, 사람 상자, 글자 상자) · 사진 비율 좌표.
+        주인공은 사진 안쪽 유지로 지켜지므로 띠에서는 빼지 않음 (주인공이 사진 끝까지 닿으면 띠가 얇아져 경계가 보임)."""
+        a = meta.get("analysis") or {}
+        text = [r.get("box") for r in (a.get("text_regions") or []) if isinstance(r, dict) and r.get("box")]
+        return list(text), [b for b in (a.get("people_boxes") or []) if b], text
+
+    def _green_people(self, ctrl_path, run_id, pl, meta, el):
+        _, ppl, _ = self._boxes(meta)
+        img = erp.green_people(Image.open(ctrl_path), self.source(run_id).size, *placement_args(pl), people_boxes=ppl,
+                               pad=float(el.get("people_pad", 0.15)))
+        img.save(ctrl_path)
+
+    def _cform_masks(self, run_id, pl, meta, d, el, cf):
+        """C형태 2K 마스크 3장 저장 → (경로 3개, R1·R2 정보)."""
+        W, H = self.cfg.get("erp_size", [2048, 1024])
+        keep, ppl, _ = self._boxes(meta)
+        m1, m2, m3, info = erp.c_form_masks(self.source(run_id).size, *placement_args(pl), W, H,
+                                            band=float(el.get("band", 0.24)), keep_boxes=keep, people_boxes=ppl,
+                                            keep_band=float(el.get("keep_band", 0.06)), people_pad=float(el.get("people_pad", 0.15)),
+                                            r1_extra=float(cf.get("r1_extra", 55)), r2=float(cf.get("r2", 140)),
+                                            overlap_full=float(cf.get("overlap_full", 10)),
+                                            overlap_ramp=float(cf.get("overlap_ramp", 15)))
+        paths = []
+        for i, m in enumerate((m1, m2, m3), 1):
+            p = self.store.path(run_id, d, f"c{i}_mask.png")
+            m.save(p)
+            paths.append(p)
+        return paths, info
+
+    def _text_8k(self, run_id, pl, meta, d, tk):
+        """글자 상자만: 원본 사진을 원래 해상도로 8K 에 투영한 그림 + 글자 상자 마스크 (8K 리파인 전에 넣고 리파인은 손대지 않음)."""
+        W = int(self.cfg.get("quest", {}).get("final_width", 8192))
+        _, _, text = self._boxes(meta)
+        src = self.source(run_id)
+        rgb, _ = erp.photo_erp(src, *placement_args(pl), W, W // 2, 0.06)
+        msk = erp.text_mask_8k(src.size, *placement_args(pl), W, W // 2, text_boxes=text,
+                               pad=float(tk.get("pad", 0.15)), soft=float(tk.get("soft", 0.02)))
+        ip, mp = self.store.path(run_id, d, "text_8k.png"), self.store.path(run_id, d, "text_8k_mask.png")
+        rgb.save(ip, compress_level=1)
+        msk.save(mp)
+        return ip, mp
+
+    def _refine_mask(self, run_id, pl, meta, d, el, rm, rf):
+        """8K 리파인 세기 마스크 (생성 1 · 사진 안쪽 photo · 글자 0) · 리파인 이음새 패딩 폭 포함."""
+        W = int(self.cfg.get("quest", {}).get("final_width", 8192))
+        _, _, text = self._boxes(meta)
+        m = erp.refine_mask_8k(self.source(run_id).size, *placement_args(pl), W, W // 2, band=float(el.get("band", 0.24)),
+                               photo_level=float(rm.get("photo", 0.33)), text_boxes=text,
+                               text_pad=float(rm.get("text_pad", 0.25)), pad_right=min(int(rf.get("tile", 1536)), W))
+        p = self.store.path(run_id, d, "refine_mask.png")
+        m.save(p)
+        return p
+
     def _keep_mask(self, run_id, pl, name, feather, floor=0.0):
         W, H = self.cfg.get("erp_size", [2048, 1024])
         m = erp.keep_mask(self.source(run_id).size, *placement_args(pl), W, H, feather, floor)
@@ -340,6 +406,11 @@ class GenerateMixin:
                     shift, yaw_gen = workflow.wrap_shift_for(float(p["placement"]["yaw"]), W)
                     gen_pl = {**p["placement"], "yaw": yaw_gen}
                 ctrl_path = await asyncio.to_thread(self._control, run_id, gen_pl, f"{d}/control.png")
+                pg = self.cfg.get("people_green", {})
+                if pg.get("enabled", False) and not wrap and self._boxes(meta)[1]:
+                    # 11-06: 사람 상자 자리는 컨트롤에서 초록으로 → 2K 가 그 자리를 배경으로 채움 (참조에 사람이 남으면 사람이 다시 나옴)
+                    await asyncio.to_thread(self._green_people, ctrl_path, run_id, gen_pl, meta, pg)
+                    print(f"[pano360] 사람 {len(self._boxes(meta)[1])}곳 컨트롤에서 지움 (초록)")
                 if gen_pl is not p["placement"]:
                     top, bottom = await asyncio.to_thread(photo_rows_at_edge, ctrl_path)
                     if bottom - top >= 64:
@@ -349,7 +420,22 @@ class GenerateMixin:
                 mask_name, soft = None, False
                 sl = self.cfg.get("soft_lock", {})
                 sl_mode = str(sl.get("mode", "off")).lower()
-                if kp.get("enabled", True):          # 사진 영역은 그대로 두고 초록 부분만 생성
+                el = self.cfg.get("edge_lock", {})
+                cform, cf = None, self.cfg.get("c_form", {})
+                if el.get("enabled", False) and not wrap and not plan_d and cf.get("enabled", False):
+                    # 11-06 C형태: 사진 안쪽 유지 → 좌우로 좁게 이어 그림(2단계) → 뒤 닫기. 사람 상자는 1단계에서 지움
+                    cp, cinfo = await asyncio.to_thread(self._cform_masks, run_id, gen_pl, meta, d, el, cf)
+                    mask_name, soft = await self._upload_file(backend, cp[0], f"{tag}_c1_mask.png"), True
+                    cform = {"m2": await self._upload_file(backend, cp[1], f"{tag}_c2_mask.png"),
+                             "m3": await self._upload_file(backend, cp[2], f"{tag}_c3_mask.png"), **cinfo}
+                    print(f"[pano360] C형태 생성 (1단계 ±{cinfo['R1']}° · 2단계 ±{cinfo['R2']}° · 3단계 뒤 닫기)")
+                elif el.get("enabled", False) and not wrap and not plan_d:
+                    # 11-06: 1차 생성에서 사진 안쪽은 원본 유지, 가장자리 띠·사람 상자만 다시 그림 (원본 붙이기 없음)
+                    mask_path = await asyncio.to_thread(self._edge_mask, run_id, gen_pl, meta, f"{d}/edge_mask.png", el)
+                    mask_name, soft = await self._upload_file(backend, mask_path, f"{tag}_edge_mask.png"), True
+                    print(f"[pano360] 가장자리만 다시 그림 (띠 {el.get('band', 0.24)}, 사람 상자 "
+                          f"{len((meta.get('analysis') or {}).get('people_boxes') or [])}개)")
+                elif kp.get("enabled", True):          # 사진 영역은 그대로 두고 초록 부분만 생성
                     mask_path = await asyncio.to_thread(self._keep_mask, run_id, gen_pl, f"{d}/keep_mask.png",
                                                         kp.get("mask_feather", 0.04))
                     mask_name = await self._upload_file(backend, mask_path, f"{tag}_keep_mask.png")
@@ -387,14 +473,25 @@ class GenerateMixin:
                         photo8k = {"image": await self._upload_file(backend, ip, f"{tag}_photo_8k.png"),
                                    "mask": await self._upload_file(backend, mp, f"{tag}_photo_8k_mask.png"),
                                    "core": await self._upload_file(backend, cp, f"{tag}_photo_8k_core.png")}
+                tk8 = self.cfg.get("text_8k", {})
+                if cform and tk8.get("enabled", False) and photo8k is None and self._boxes(meta)[2]:
+                    # 글자 선명도: 글자 상자만 원본 원래 해상도 (2K 사진 안쪽이 원본 그대로라 자리·모양이 같음)
+                    ip, mp = await asyncio.to_thread(self._text_8k, run_id, gen_pl, meta, d, tk8)
+                    photo8k = {"image": await self._upload_file(backend, ip, f"{tag}_text_8k.png"),
+                               "mask": await self._upload_file(backend, mp, f"{tag}_text_8k_mask.png")}
+                    print(f"[pano360] 글자 상자 {len(self._boxes(meta)[2])}곳 원본 해상도로 8K 에 넣음")
                 tmpl = workflow.load_template(self.cfg["workflow"])
                 st = self._settings(p, meta, p["prompts"].get("positive", ""))
+                rm = self.cfg.get("refine_mask", {})
+                if cform and rm.get("enabled", False) and isinstance(st.get("refine"), dict):
+                    rpth = await asyncio.to_thread(self._refine_mask, run_id, gen_pl, meta, d, el, rm, st["refine"])
+                    st["refine"] = {**st["refine"], "mask": await self._upload_file(backend, rpth, f"{tag}_refine_mask.png")}
                 if harm and isinstance(st.get("refine"), dict):   # 보존 모드: 8K 리파인 약하게 (원본 넣은 뒤 경계·질감만 녹임)
                     st["refine"] = {**st["refine"], "denoise": float(hc.get("refine_denoise", 0.15))}
                 wf_api, seeds = workflow.build(tmpl, self.cfg["node_ids"], control_image=name, prompts=p["prompts"],
                                                seed1=p.get("seed1"), seed2=p.get("seed2"),
                                                prefix=prefix, settings=st, keep_mask=mask_name, wrap=wrap,
-                                               soft_lock=soft, photo8k=photo8k, harmonize=harm)
+                                               soft_lock=soft, photo8k=photo8k, harmonize=harm, cform=cform)
                 if kp.get("enabled", True) and kp.get("upscale_photo", True):
                     # 원본 사진 자리 화질: 사진을 원래 해상도로 AI 업스케일 → 마지막에 이걸 붙임
                     ph_name = await backend.upload(await asyncio.to_thread(self._source_png, run_id), f"{tag}_photo.png")
@@ -404,7 +501,10 @@ class GenerateMixin:
                                                   "진단 · 이음새 복원 직후 2K")
                     out_nodes["dbg_seam2k"] = "973"
                 p["settings"] = {k: v for k, v in st.items() if k != "refine"}
-                p["settings"].update(photo_quality=round(q_ratio, 2), photo_8k=bool(photo8k), soft_lock=soft,
+                p["settings"].update(edge_lock=bool(el.get("enabled", False) and not wrap and not plan_d),
+                                     c_form=({k: cform[k] for k in ("R1", "R2")} if cform else False),
+                                     text_8k=bool(cform and photo8k), refine_mask=bool(isinstance(st.get("refine"), dict) and st["refine"].get("mask")),
+                                     photo_quality=round(q_ratio, 2), photo_8k=bool(photo8k), soft_lock=soft,
                                      photo_harmonize=({"denoise": harm["denoise"]} if harm else False))
                 if wrap:
                     p["settings"]["wrap_in_photo"] = wrap

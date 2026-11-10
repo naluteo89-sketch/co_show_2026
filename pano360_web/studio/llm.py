@@ -155,7 +155,7 @@ STEP 2 - prompt fields, written from STEP 1 only (plus the reference photos for 
 - scene: 30-60 words, natural flowing sentences. The place and the main subject as they look, with real materials, colors and
   details. Name the place only if clearly identifiable. Refer to things that appear once in the singular
   ("a pavilion", never "pavilions"). Never mention people, visitors, crowds or activities: the generated
-  world must stay empty of people (people already in the photo stay as they are).
+  world must stay empty of people (people visible in the photo are removed: list every one in people_boxes).
 - surroundings: 35-65 words, natural flowing sentences (not instructions like "extend" or "continue the"). First what
   lies just past the photo's left and right borders, with the same materials, heights, colors and light as the
   things cut by the borders, so the photo blends into the new areas without any break; then what is
@@ -198,6 +198,10 @@ STEP 2 - prompt fields, written from STEP 1 only (plus the reference photos for 
   exactly one role "main_subject" (the main_subject above), then the other large structures, tree groups, paths,
   water or mountains (2-5 word names). The code turns every box into a 360 direction (where it sits around the viewer
   in the HMD) so the panorama keeps them in place.
+- people_boxes: one box [x0, y0, x1, y1] (photo fractions, 0 = left/top) per person or tight group of people visible
+  anywhere in the photo, including small distant figures, silhouettes, people sitting, cycling or partly hidden behind
+  something. Each box covers the whole body with its shadow and what it carries. The code redraws these areas so the
+  panorama has no people. [] if nobody is visible.
 - text_regions: one entry PER separate lettering area (each board, sign, plaque, banner, stele face, painted word) —
   a photo often has several in different scripts (a hanja name board plus Hangul signs plus English); list each one
   with its own box. Every sign, signboard, hanging name board (hyeonpan) or painted lettering in the photo whose letters
@@ -276,10 +280,11 @@ SCHEMA = {
                                                                "other"]},
                            "box": {"type": "array", "items": {"type": "number"}}},
             "required": ["name", "role", "box"]}},
+        "people_boxes": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},  # 사람 위치: 2K 에서 다시 그려 지움
     },
     "required": ["observed", "facts", "scene", "surroundings", "behind", "ground_below", "sky_above", "lighting", "lighting_detail",
                  "lighting_short", "lighting_negatives", "content_negatives", "seam_elements", "horizon_y",
-                 "hfov_estimate", "summary_ko", "tips_ko", "enlarge", "text_regions", "objects"],
+                 "hfov_estimate", "summary_ko", "tips_ko", "enlarge", "text_regions", "objects", "people_boxes"],
 }
 
 

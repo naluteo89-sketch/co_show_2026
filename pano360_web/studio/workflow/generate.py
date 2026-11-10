@@ -14,7 +14,7 @@ SEAM_TRIGGER = ("Fill the green spaces according to the image. This is a 360 equ
 def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
           seed1=None, seed2=None, prefix="VR360/studio", settings: dict | None = None,
           keep_mask: str | None = None, wrap: dict | None = None, soft_lock: bool = False,
-          photo8k: dict | None = None, harmonize: dict | None = None) -> tuple[dict, dict]:
+          photo8k: dict | None = None, harmonize: dict | None = None, cform: dict | None = None) -> tuple[dict, dict]:
     """soft_lock: keep_mask 가 회색(사진 안쪽도 약하게 다시 그림)일 때 DifferentialDiffusion 을 1차 샘플러 모델에 검.
     photo8k: {"image": 8K 원본 투영 그림, "mask": 섞기 마스크} — 8K 업스케일 뒤·리파인 전에 사진 자리를 원본으로."""
     api = ui_to_api(copy.deepcopy(template_ui))
@@ -57,9 +57,12 @@ def build(template_ui: dict, ids: dict, *, control_image: str, prompts: dict,
     if st.get("cylinder", False) and not wrap:
         # 원통 생성: 다 그린 뒤 띠를 붙이지 않고, 생성 뒷부분을 이음새가 가운데 오게 돌려서 그림
         # → 0°/360° 가 캔버스 안쪽에서 양쪽을 보며 한 장으로 그려짐 (초록 띠·섞기·2차 패스 없음)
-        cylinder_pass(api, ids, s1, denoise=float(st.get("cylinder_denoise", 0.6)),
-                      keep=float(st.get("cylinder_keep", 0.5)), feather=int(st.get("cylinder_feather", 128)),
-                      back_text=prompts.get("back_positive") or "", pick=bool(st.get("cylinder_pick", True)))
+        if cform and keep_mask:                            # 11-06 C형태: 사진 좌우로 좁게 이어 그리고 마지막에 뒤를 닫음 (원통 패스 대신)
+            c_form_pass(api, ids, s1, cform, back_text=prompts.get("back_positive") or "")
+        else:
+            cylinder_pass(api, ids, s1, denoise=float(st.get("cylinder_denoise", 0.6)),
+                          keep=float(st.get("cylinder_keep", 0.5)), feather=int(st.get("cylinder_feather", 128)),
+                          back_text=prompts.get("back_positive") or "", pick=bool(st.get("cylinder_pick", True)))
         # 1차 생성 회전 디노이즈: 스텝마다 가로로 돌려 양 끝(0°/360°) 오차가 한 자리에 쌓이지 않게 (PanoWan RSD)
         if int(st.get("rotate_chunks", 0) or 0) > 1 and not keep_mask:
             rotated_first_pass(api, ids, s1, int(st["rotate_chunks"]))
@@ -469,6 +472,46 @@ def cylinder_pass(api: dict, ids: dict, seed: int, denoise: float = 0.6, keep: f
     return True
 
 
+def c_form_pass(api: dict, ids: dict, seed: int, cform: dict, back_text: str = "") -> bool:
+    """C형태 2K 생성 (11-06). 1단계는 31(사진 안쪽 유지 마스크 = keep_mask, lock_photo_region 이 이미 걸어 둠).
+    2단계: 1단계 결과(8) 를 참조로 m2(±R1→±R2) 만 그림 · 3단계: 반 바퀴 돌려 m3(뒤쪽 틈) 만 그림 → 다시 돌려 108 로.
+    각 단계는 앞 단계 그림을 그대로 두고 새 띠만 채움 (초록 = 아직 안 그린 곳). 원통 패스·이음새 복원 대신."""
+    main, vae_id = str(ids["sampler_main"]), str(ids["vae"])
+    need = ("8", "100", "105", "106", "107", "108", str(ids["positive"]), str(ids["negative"]), main)
+    if not all(k in api for k in need) or not cform.get("m2") or not cform.get("m3"):
+        return False
+    W = int(api["100"]["inputs"].get("width", 2048))
+    H = int(api["100"]["inputs"].get("height", 1024))
+    sm = api[main]["inputs"]
+    vae, pos, neg = [vae_id, 0], [str(ids["positive"]), 0], [str(ids["negative"]), 0]
+    kw = dict(steps=sm.get("steps", 20), cfg=sm.get("cfg", 4.0), denoise=1.0,
+              sampler_name=sm.get("sampler_name", "euler"), scheduler=sm.get("scheduler", "simple"))
+    api["1201"] = node("LoadImageMask", {"image": cform["m2"], "channel": "red"}, "C 2단계 · 그릴 띠 (좌우 바깥)")
+    api["1202"] = node("VAEEncode", {"pixels": ["8", 0], "vae": vae}, "C 2단계 · 1단계 결과 인코드")
+    api["1203"] = node("ReferenceLatent", {"conditioning": pos, "latent": ["1202", 0]}, "C 2단계 · 참조 (1단계 결과)")
+    api["1204"] = node("SetLatentNoiseMask", {"samples": ["1202", 0], "mask": ["1201", 0]}, "C 2단계 · 띠만 그림")
+    api["1205"] = ksampler(sm["model"], ["1203", 0], neg, ["1204", 0], seed=int(seed) + 11, title="C 2단계 · 좌우 바깥 그림", **kw)
+    api["1206"] = node("VAEDecode", {"samples": ["1205", 0], "vae": vae}, "C 2단계 · 디코드")
+    rolled = _roll_half(api, ["1206", 0], W, H, 1210, "C 3단계 · 반 바퀴 돌림 (뒤가 가운데)")
+    api["1220"] = node("LoadImageMask", {"image": cform["m3"], "channel": "red"}, "C 3단계 · 뒤쪽 틈 (돌린 기준)")
+    api["1221"] = node("VAEEncode", {"pixels": rolled, "vae": vae}, "C 3단계 · 인코드")
+    cond = pos
+    clip = api[str(ids["positive"])]["inputs"].get("clip")
+    if back_text.strip() and clip:
+        api["1222"] = node("CLIPTextEncode", {"text": back_text, "clip": clip}, "C 3단계 · 뒤쪽 프롬프트")
+        cond = ["1222", 0]
+    api["1223"] = node("ReferenceLatent", {"conditioning": cond, "latent": ["1221", 0]}, "C 3단계 · 참조")
+    api["1224"] = node("SetLatentNoiseMask", {"samples": ["1221", 0], "mask": ["1220", 0]}, "C 3단계 · 틈만 그림")
+    api["1225"] = ksampler(sm["model"], ["1223", 0], neg, ["1224", 0], seed=int(seed) + 23, title="C 3단계 · 뒤 닫기", **kw)
+    api["1226"] = node("VAEDecode", {"samples": ["1225", 0], "vae": vae}, "C 3단계 · 디코드")
+    for k in ("105", "106"):                               # 다시 반 바퀴 → 원래 방향 (108)
+        api[k]["inputs"]["image"] = ["1226", 0]
+    api["107"]["inputs"]["destination"] = ["1226", 0]
+    for k in ("77", "78", "79", "80", "82", "83", "84", "85", "101", "102", "103", "104", "630"):
+        api.pop(k, None)
+    return True
+
+
 def seam_core_only(api: dict, core: int = 256, feather: int = 32) -> bool:
     """1차 이음새 복원(초록 띠 채우기)을 띠 가운데 core px 로 좁힘.
     - 초록(901/902)·노이즈 마스크(82)는 가운데 core 만 (딱 끊김 — 바깥 latent 는 그대로라 모델이 경계에서 이어 그림)
@@ -617,7 +660,7 @@ def attach_refine_to_generate(api: dict, ids: dict, rf: dict, prompts: dict, W=8
     last = add_refine(api, src or [src_node, 0], W, H, unet=str(ids["unet"]), clip=str(ids["clip"]), vae=str(ids["vae"]),
                       positive=rf["positive"], negative=prompts.get("negative", ""), seed=rf.get("seed", 0),
                       steps=rf.get("steps", 20), cfg=rf.get("cfg", 4.0), denoise=rf.get("denoise", 0.3),
-                      tile=rf.get("tile", 1536), overlap=rf.get("overlap", 192))
+                      tile=rf.get("tile", 1536), overlap=rf.get("overlap", 192), mask=rf.get("mask"))
     api[noise_node]["inputs"]["image"] = last
     api.pop(blend_node, None)
     api.pop(lanczos_node, None)

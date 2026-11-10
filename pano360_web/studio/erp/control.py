@@ -9,7 +9,7 @@ import math
 import numpy as np
 from PIL import Image
 
-from .projection import GREEN, RAD, edge_weight, erp_dirs, photo_coords, plane_uv, sample_plane, to_image
+from .projection import GREEN, RAD, edge_weight, erp_dirs, photo_coords, plane_uv, sample_plane, smooth, to_image
 
 
 def make_control(img: Image.Image, yaw, pitch, hfov, vfov=None, W=2048, H=1024) -> Image.Image:
@@ -40,6 +40,133 @@ def keep_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, feather=0
     u, v, f = photo_coords(W, H, np.arange(H), yaw, pitch, hfov, sh / sw, vfov)
     w, _ = edge_weight(u, v, f, feather)
     return Image.fromarray(((1.0 - w * (1.0 - float(floor))) * 255).astype(np.uint8), "L").convert("RGB")
+
+
+def edge_lock_mask(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, band=0.24, keep_boxes=(), people_boxes=(),
+                   keep_band=0.06, people_pad=0.15, soft=0.03) -> Image.Image:
+    """1차 생성용 '다시 그릴 곳' 마스크 (흰색=생성, 검정=원본 유지, 회색=부분 · DifferentialDiffusion 과 함께).
+    - 사진 안쪽은 원본 유지, 가장자리 band(정규화 거리, 0.24 = 각 변에서 사진 폭·높이의 12%) 만 다시 그림.
+    - keep_boxes(랜드마크·간판, 사진 비율 상자): 가장자리에 걸쳐도 keep_band 까지만 다시 그림.
+    - people_boxes(사람 상자): people_pad 만큼 넓혀 완전히 다시 그림 (사람 지우기, 다른 규칙보다 우선)."""
+    sw, sh = photo_size
+    u, v, f = photo_coords(W, H, np.arange(H), yaw, pitch, hfov, sh / sw, vfov)
+    w, _ = edge_weight(u, v, f, band)
+    gen = 1.0 - w
+    inside = f & (np.abs(u) <= 1) & (np.abs(v) <= 1)
+    fx, fy = (u + 1) / 2, (1 - v) / 2
+
+    def box_w(b, pad):
+        x0, y0, x1, y1 = [float(t) for t in b[:4]]
+        px, py = (x1 - x0) * pad, (y1 - y0) * pad
+        x0, x1, y0, y1 = x0 - px, x1 + px, y0 - py, y1 + py
+        d = np.minimum(np.minimum(fx - x0, x1 - fx), np.minimum(fy - y0, y1 - fy))
+        return np.where(inside, smooth(d / max(soft, 1e-4)), 0.0)
+
+    if keep_boxes:
+        wk, _ = edge_weight(u, v, f, keep_band)
+        gk = 1.0 - wk
+        for b in keep_boxes:
+            if isinstance(b, (list, tuple)) and len(b) >= 4:
+                s = box_w(b, 0.0)
+                gen = gen * (1 - s) + np.minimum(gen, gk) * s
+    for b in people_boxes or ():
+        if isinstance(b, (list, tuple)) and len(b) >= 4:
+            gen = np.maximum(gen, box_w(b, people_pad))
+    return Image.fromarray((np.clip(gen, 0, 1) * 255).astype(np.uint8), "L").convert("RGB")
+
+
+def _box_weight(fx, fy, inside, b, pad, soft):
+    """사진 비율 상자 b=[x0,y0,x1,y1] (pad 만큼 넓힘) 안 1 → 가장자리 soft 동안 0."""
+    x0, y0, x1, y1 = [float(t) for t in b[:4]]
+    px, py = (x1 - x0) * pad, (y1 - y0) * pad
+    x0, x1, y0, y1 = x0 - px, x1 + px, y0 - py, y1 + py
+    d = np.minimum(np.minimum(fx - x0, x1 - fx), np.minimum(fy - y0, y1 - fy))
+    return np.where(inside, smooth(d / max(soft, 1e-4)), 0.0)
+
+
+def c_form_masks(photo_size, yaw, pitch, hfov, vfov=None, W=2048, H=1024, *, band=0.24, keep_boxes=(),
+                 people_boxes=(), keep_band=0.06, people_pad=0.15, r1_extra=55.0, r2=140.0, overlap=8.0,
+                 overlap_full=10.0, overlap_ramp=15.0):
+    """C형태 2K 생성 마스크 3장 (흰색=그림, 검정=그대로, 회색=부분 · DifferentialDiffusion).
+    1단계: 사진 좌우로 hfov/2 + r1_extra 도까지 (사진 안쪽 유지 · 가장자리 띠 · 사람 상자 = edge_lock_mask).
+    2단계: 거기서 ±r2 도까지 (앞 단계와 overlap 도 겹쳐 섞음).
+    3단계: 남은 뒤쪽 틈 — 반 바퀴 돌린 캔버스 기준 (0°/360° 가 가운데에서 한 번에 이어 그려짐)."""
+    m1 = np.asarray(edge_lock_mask(photo_size, yaw, pitch, hfov, vfov, W, H, band=band, keep_boxes=keep_boxes,
+                                   people_boxes=people_boxes, keep_band=keep_band, people_pad=people_pad))[..., 0] / 255.0
+    lon = ((np.arange(W) + 0.5) / W - 0.5) * 360.0
+    d = np.abs(((lon - float(yaw) + 180.0) % 360.0) - 180.0)            # 정면(사진 방향)에서 떨어진 각도
+    # 단계 사이: 앞 단계 쪽으로 overlap_full 도는 완전히 다시 그리고, 그 앞 overlap_ramp 도는 점점 약하게
+    # (4스텝 모델은 부분 세기만으로는 잘 안 섞여 경계선이 남음 → 경계를 다시 그린 띠 안쪽으로)
+    of, orp = max(0.0, float(overlap_full)), max(1.0, float(overlap_ramp))
+    R1 = float(hfov) / 2 + float(r1_extra)
+    R2 = max(R1 + of + orp + 10.0, float(r2))
+    c1 = (d <= R1).astype(np.float64)
+    c2 = smooth((d - (R1 - of - orp)) / orp) * (d <= R2)
+    c3 = smooth((d - (R2 - of - orp)) / orp)
+    m1 = m1 * c1[None, :]
+    m2 = np.broadcast_to(c2[None, :], (H, W))
+    m3 = np.roll(np.broadcast_to(c3[None, :], (H, W)), -(W // 2), axis=1)   # _roll_half 와 같은 방향
+    img = lambda a: Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8), "L").convert("RGB")
+    return img(m1), img(m2), img(m3), {"R1": round(R1, 1), "R2": round(R2, 1)}
+
+
+def refine_mask_8k(photo_size, yaw, pitch, hfov, vfov=None, W=8192, H=4096, *, band=0.24, photo_level=0.33,
+                   text_boxes=(), text_pad=0.25, soft=0.03, pad_right=1536, chunk=256) -> Image.Image:
+    """8K 리파인 노이즈 마스크 (흰색=리파인 그대로, 회색=약하게, 검정=손대지 않음).
+    생성 영역 1 · 사진 안쪽 photo_level · 글자 상자 0. 리파인 이음새 패딩(pad_right)만큼 왼쪽 앞부분을 오른쪽에 이어 붙임."""
+    sw, sh = photo_size
+    out = np.zeros((H, W), np.uint8)
+    for r0 in range(0, H, chunk):
+        rows = np.arange(r0, min(H, r0 + chunk))
+        u, v, f = photo_coords(W, H, rows, yaw, pitch, hfov, sh / sw, vfov)
+        w, _ = edge_weight(u, v, f, band)
+        val = 1.0 - w * (1.0 - float(photo_level))
+        inside = f & (np.abs(u) <= 1) & (np.abs(v) <= 1)
+        fx, fy = (u + 1) / 2, (1 - v) / 2
+        for b in text_boxes or ():
+            if isinstance(b, (list, tuple)) and len(b) >= 4:
+                s = _box_weight(fx, fy, inside, b, text_pad, soft)
+                val = val * (1 - s)
+        out[rows] = (np.clip(val, 0, 1) * 255).astype(np.uint8)
+    if pad_right:
+        out = np.concatenate([out, out[:, :int(pad_right)]], axis=1)
+    return Image.fromarray(out, "L").convert("RGB")
+
+
+def text_mask_8k(photo_size, yaw, pitch, hfov, vfov=None, W=8192, H=4096, *, text_boxes=(), pad=0.15, soft=0.02,
+                 chunk=256) -> Image.Image:
+    """8K 에서 글자 상자 자리 = 1 (원본 사진 원래 해상도 투영을 넣을 곳), 가장자리 soft 동안 0."""
+    sw, sh = photo_size
+    out = np.zeros((H, W), np.uint8)
+    for r0 in range(0, H, chunk):
+        rows = np.arange(r0, min(H, r0 + chunk))
+        u, v, f = photo_coords(W, H, rows, yaw, pitch, hfov, sh / sw, vfov)
+        inside = f & (np.abs(u) <= 1) & (np.abs(v) <= 1)
+        fx, fy = (u + 1) / 2, (1 - v) / 2
+        val = np.zeros(u.shape)
+        for b in text_boxes or ():
+            if isinstance(b, (list, tuple)) and len(b) >= 4:
+                val = np.maximum(val, _box_weight(fx, fy, inside, b, pad, soft))
+        out[rows] = (np.clip(val, 0, 1) * 255).astype(np.uint8)
+    return Image.fromarray(out, "L").convert("RGB")
+
+def green_people(ctrl: Image.Image, photo_size, yaw, pitch, hfov, vfov=None, people_boxes=(), pad=0.15) -> Image.Image:
+    """컨트롤 이미지의 사람 상자 자리를 초록(#00ff00 = 비어 있음)으로 칠함 → 모델이 사람 정보 없이 배경으로 채움
+    (참조 ReferenceLatent 에 사람이 남아 있으면 그 자리를 다시 그려도 사람을 다시 그림)."""
+    if not people_boxes:
+        return ctrl
+    W, H = ctrl.size
+    sw, sh = photo_size
+    u, v, f = photo_coords(W, H, np.arange(H), yaw, pitch, hfov, sh / sw, vfov)
+    inside = f & (np.abs(u) <= 1) & (np.abs(v) <= 1)
+    fx, fy = (u + 1) / 2, (1 - v) / 2
+    m = np.zeros(u.shape, bool)
+    for b in people_boxes:
+        if isinstance(b, (list, tuple)) and len(b) >= 4:
+            m |= _box_weight(fx, fy, inside, b, pad, 1e-4) > 0.5
+    a = np.asarray(ctrl.convert("RGB")).copy()
+    a[m] = GREEN.astype(np.uint8) if hasattr(GREEN, "astype") else GREEN
+    return Image.fromarray(a, "RGB")
 
 
 def photo_erp(img: Image.Image, yaw, pitch, hfov, vfov=None, W=8192, H=4096, feather=0.06, inset=0.005,
